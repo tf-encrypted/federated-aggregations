@@ -41,7 +41,8 @@ def local_paillier_executor_factory(
        tff.SERVER): channels.StubChannel()})
 
   def intrinsic_strategy_fn(executor):
-    return paillier_strategy.PaillierStrategy(executor, channel_grid)
+    return paillier_strategy.PaillierStrategy(executor, channel_grid,
+        paillier_strategy.paillier_keygen(bitlength=2048))
 
   device_scheduler = _AggregatorDeviceScheduler(
       server_tf_device, aggregator_tf_device, client_tf_devices)

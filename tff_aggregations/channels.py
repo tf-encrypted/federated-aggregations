@@ -10,10 +10,10 @@ PlacementPair = Tuple[placement_literals.PlacementLiteral, placement_literals.Pl
 
 class Channel(metaclass=abc.ABCMeta):
   @abc.abstractmethod
-  def send(self, value): pass
+  async def send(self, value): pass
 
   @abc.abstractmethod
-  def receive(self, value): pass
+  async def receive(self, value): pass
 
   @abc.abstractmethod
   def setup(self, placements): pass
@@ -29,10 +29,10 @@ class StubChannel(Channel):
   def _keygen(self): pass
   def _keyexchange(self): pass
 
-  def send(self, value):
+  async def send(self, value):
     return value
 
-  def receive(self, value):
+  async def receive(self, value):
     return value
 
 
@@ -43,5 +43,5 @@ class ChannelGrid:
   def __getitem__(self, placements: PlacementPair):
     py_typecheck.check_type(placements, tuple)
     py_typecheck.check_len(placements, 2)
-    sorted_placements = sorted(placements, key=lambda p: p.uri)
+    sorted_placements = tuple(sorted(placements, key=lambda p: p.uri))
     return self.channel_dict.get(sorted_placements)
