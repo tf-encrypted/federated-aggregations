@@ -2,12 +2,9 @@ import asyncio
 
 import tensorflow as tf
 import tensorflow_federated as tff
-from tensorflow_federated.proto.v0 import computation_pb2 as pb
-from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computation_types
 from tensorflow_federated.python.core.impl.compiler import placement_literals
-from tensorflow_federated.python.core.impl.executors import executor_utils
 from tensorflow_federated.python.core.impl.executors import federating_executor
 from tf_encrypted.primitives import paillier
 
@@ -30,7 +27,7 @@ def paillier_keygen(bitlength=None):
 
 def _check_key_inputter(fn_value):
   fn_type = fn_value.type_signature
-  py_typecheck.check_type(fn_type, computation_types.FunctionType)
+  py_typecheck.check_type(fn_type, tff.FunctionType)
   try:
     py_typecheck.check_len(fn_type.result, 2)
   except ValueError:
@@ -39,7 +36,7 @@ def _check_key_inputter(fn_value):
         'found {}.'.format(len(fn_type.result)))
   ek_type, dk_type = fn_type.result
   py_typecheck.check_type(ek_type, tff.TensorType)
-  py_typecheck.check_type(dk_type, computation_types.NamedTupleType)
+  py_typecheck.check_type(dk_type, tff.NamedTupleType)
   try:
     py_typecheck.check_len(dk_type, 2)
   except ValueError:
@@ -50,7 +47,8 @@ def _check_key_inputter(fn_value):
   py_typecheck.check_type(dk_type[1], tff.TensorType)
 
 
-class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):  # TODO: change to tff.framework.CentralizedIntrinsicStrategy
+# FIXME: change superclass to tff.framework.CentralizedIntrinsicStrategy
+class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
   def __init__(self, parent_executor, channel_grid, key_inputter):
     super().__init__(parent_executor)
     self.channel_grid = channel_grid

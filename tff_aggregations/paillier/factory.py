@@ -55,26 +55,26 @@ def local_paillier_executor_factory(
 
   if num_clients is None:
     return _create_inferred_cardinality_factory(
-        stack_func, num_client_executors)
+        stack_func)
 
   return _create_explicit_cardinality_factory(
-      num_clients, stack_func, num_client_executors)
+      num_clients, stack_func)
 
 def _create_explicit_cardinality_factory(
-    num_clients, stack_func, num_client_executors):
+    num_clients, stack_func):
 
   def _make_factory(cardinalities):
-    n_requested_clients = cardinalities.get(tff.CLIENTS)
-    if n_requested_clients is not None and n_requested_clients != num_clients:
+    num_requested_clients = cardinalities.get(tff.CLIENTS)
+    if num_requested_clients is not None and num_requested_clients != num_clients:
       raise ValueError('Expected to construct an executor with {} clients, '
                        'but executor is hardcoded for {}'.format(
-                           n_requested_clients, num_clients))
+                           num_requested_clients, num_clients))
     return stack_func(num_clients)
 
   return tff.framework.create_executor_factory(_make_factory)
 
 
-def _create_inferred_cardinality_factory(stack_func, num_client_executors):
+def _create_inferred_cardinality_factory(stack_func):
 
   def _make_factory(cardinalities):
     py_typecheck.check_type(cardinalities, dict)
