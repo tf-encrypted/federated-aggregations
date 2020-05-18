@@ -16,6 +16,9 @@ from tff_aggregations.paillier import placement as paillier_placement
 
 
 def paillier_keygen(bitlength=None):
+  # TODO this bitlength is currently fixed during executor factory construction
+  # but it technically only needs to be fixed at each _paillier_setup phase.
+  # would we ever need to rerun the setup phase with a new bitlength?
 
   @tff.tf_computation
   def _keygen():
@@ -125,28 +128,3 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):  # TOD
     #   7. _move(res_enc@PAILLIER, SERVER) -> res_enc@SERVER
     #   8. Create tuple (dk@SERVER, res_enc@SERVER)
     #   9. Create call decrypt(dk@SERVER, res_enc@SERVER) -> res@SERVER
-
-
-    zero, plus = tuple(await asyncio.gather(*[
-        executor_utils.embed_tf_scalar_constant(
-            self.executor,
-            arg.type_signature.member,
-            0),
-        executor_utils.embed_tf_binary_operator(
-            self.executor,
-            arg.type_signature.member,
-            paillier.add)
-    ]))
-
-    ## TODO trusted aggr style reduce ##
-
-    val = arg.internal_representation
-    item_type = arg.type_signature.member
-    py_typecheck.check_type(val, list)
-    paillier_executor = self._get_child_executors(
-        paillier_placement.PAILLIER, index=0)
-
-    items = await asyncio.gather(*[
-        _move(v, tff.CLIENTS, paillier_placement.PAILLIER)
-        for v in val
-    ])
