@@ -12,17 +12,52 @@ from tff_aggregations import channels
 from tff_aggregations.paillier import placement as paillier_placement
 
 
-def paillier_keygen(bitlength=None):
-  # TODO this bitlength is currently fixed during executor factory construction
-  # but it technically only needs to be fixed at each _paillier_setup phase.
-  # would we ever need to rerun the setup phase with a new bitlength?
+def paillier_keygen(bitlength=2048):
 
   @tff.tf_computation
   def _keygen():
-    ek, dk = paillier.gen_keypair(bitlength)
-    return ek.export(), dk.export()
+    encryption_key, decryption_key = paillier.gen_keypair(bitlength)
+    return encryption_key.export(), decryption_key.export()
 
   return _keygen
+
+
+def _paillier_encrypt():
+
+  @tff.tf_computation
+  def _encrypt(encryption_key_raw, plaintext):
+    ek = paillier.EncryptionKey(encryption_key_raw)
+    return paillier.encrypt(ek, plaintext)
+
+  return _encrypt
+
+
+def _paillier_decrypt(dtype):
+  # FIXME figure out how different dtypes are chosen;
+  #    maybe a dtype-specific fn cache on the strategy at runtime?
+  # could also pass it directly to the tf_computation as a tf.string tensor,
+  # but that feels like a hack
+
+  @tff.tf_computation((tf.string, tf.string), tf.string, dtype)
+  def _decrypt(decryption_key_raw, encryption_key_raw, ciphertext_raw):
+    dk = paillier.DecryptionKey(decryption_key_raw)
+    ek = paillier.EncryptionKey(encryption_key_raw)
+    ciphertext = paillier.Ciphertext(ek, ciphertext_raw)
+    return paillier.decrypt(dk, ciphertext, dtype)
+
+  return _decrypt
+
+
+def _paillier_sequence_sum():
+
+  @tff.tf_computation
+  def _sequence_sum(encryption_key, *summands):
+    result = summands[0]
+    for summand in summands[1:]:
+      result = paillier.add(encryption_key, result, summand, do_refresh=False)
+    return paillier.refresh(encryption_key, result)
+
+  return _sequence_sum
 
 
 def _check_key_inputter(fn_value):
@@ -47,7 +82,7 @@ def _check_key_inputter(fn_value):
   py_typecheck.check_type(dk_type[1], tff.TensorType)
 
 
-# FIXME: change superclass to tff.framework.CentralizedIntrinsicStrategy
+# TODO: change superclass to tff.framework.CentralizedIntrinsicStrategy
 class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
   def __init__(self, parent_executor, channel_grid, key_inputter):
     super().__init__(parent_executor)
@@ -111,7 +146,10 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
       await self._paillier_setup()
       self._requires_setup = False
 
-    value, bitwidth = arg
+    client_values, bitwidth = arg.internal_representation
+    b = await bitwidth.compute()
+
+    import pdb; pdb.set_trace()
 
     # TODO
     #   1. If not done before, call self._paillier_setup()
