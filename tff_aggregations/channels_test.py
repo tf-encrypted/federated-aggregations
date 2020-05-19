@@ -31,6 +31,19 @@ def create_test_executor(number_of_clients: int = 3):
       None: create_bottom_stack()},
       intrinsic_strategy_fn=intrinsic_strategy_fn)
 
+class ChannelGridTest(parameterized.TestCase):
+
+  def test_channel_grid(self):
+    channel_grid = channels.ChannelGrid({
+          (placement_literals.CLIENTS, placement_literals.SERVER):
+              channels.PlaintextChannel()
+      })
+
+    channel = channel_grid[(placement_literals.CLIENTS,
+                            placement_literals.SERVER)]
+
+    assert isinstance(channel, channels.PlaintextChannel)
+
 class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
 
   def test_generate_aggregator_keys(self):
