@@ -2,11 +2,15 @@ import abc
 from dataclasses import dataclass
 from typing import Tuple, Dict
 
+import asyncio
+
 from tensorflow_federated.python.common_libs import py_typecheck
+from tensorflow_federated.python.core.api import computations
 from tensorflow_federated.python.core.api import computation_types
 from tensorflow_federated.python.core.impl.compiler import placement_literals
 from tensorflow_federated.python.core.impl.executors import federating_executor
 
+from tf_encrypted.primitives.sodium import easy_box
 
 PlacementPair = Tuple[placement_literals.PlacementLiteral, placement_literals.PlacementLiteral]
 
@@ -26,7 +30,19 @@ class Channel(metaclass=abc.ABCMeta):
     pass
 
 
-class EasyBoxChannel(channel_base.Channel):
+class StubChannel(Channel):
+  def setup(self, placements): pass
+  def _keygen(self): pass
+  def _keyexchange(self): pass
+
+  async def send(self, value):
+    return value
+
+  async def receive(self, value):
+    return value
+
+
+class EasyBoxChannel(Channel):
 
   def __init__(self, parent_executor, sender_placement, receiver_placement):
 
