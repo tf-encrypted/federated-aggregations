@@ -22,11 +22,8 @@ def create_test_executor(number_of_clients: int = 3):
     # return tff.framework.ReferenceResolvingExecutor(executor)
     return executor
 
-  channel_grid = channels.ChannelGrid({
-      (tff.CLIENTS, tff.SERVER): channels.StubChannel()})
-
   def intrinsic_strategy_fn(executor):
-    return channels_test_utils.MockStrategy(executor, channel_grid)
+    return federating_executor.CentralizedIntrinsicStrategy(executor)
 
   return tff.framework.FederatingExecutor({
       tff.SERVER: create_bottom_stack(),

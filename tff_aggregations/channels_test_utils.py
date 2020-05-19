@@ -32,9 +32,3 @@ class AsyncTestCase(absltest.TestCase):
 
   def run_sync(self, coro):
     return self.loop.run_until_complete(coro)
-
-
-class MockStrategy(federating_executor.CentralizedIntrinsicStrategy):
-  def __init__(self, parent_executor, channel_grid):
-    super().__init__(parent_executor)
-    self.channel_grid = channel_grid
