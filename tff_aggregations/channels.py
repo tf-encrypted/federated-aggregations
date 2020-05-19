@@ -4,10 +4,10 @@ from typing import Tuple, Dict
 
 import asyncio
 
+import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computations
-from tensorflow_federated.python.core.api import computation_types
 from tensorflow_federated.python.core.impl.compiler import placement_literals
 from tensorflow_federated.python.core.impl.executors import federating_executor
 
@@ -30,11 +30,22 @@ class Channel(metaclass=abc.ABCMeta):
   async def setup(self):
     pass
 
-
+# NOTE to delete once the rest of the code base
+# doesn't need it for prototyping
 class StubChannel(Channel):
   def setup(self, placements): pass
   def _keygen(self): pass
   def _keyexchange(self): pass
+
+  async def send(self, value):
+    return value
+
+  async def receive(self, value):
+    return value
+
+
+class PlaintextChannel(Channel):
+  def setup(self, placements): pass
 
   async def send(self, value):
     return value
@@ -99,11 +110,11 @@ class EasyBoxChannel(Channel):
       key_generator = await executor.create_call(await executor.create_value(
           fn, fn_type))
 
-      pk = await executor.create_selection(key_generator, 0)
-      sk = await executor.create_selection(key_generator, 1)
+      public_key = await executor.create_selection(key_generator, 0)
+      secret_key = await executor.create_selection(key_generator, 1)
 
-      pk_vals.append(pk)
-      sk_vals.append(sk)
+      pk_vals.append(public_key)
+      sk_vals.append(secret_key)
 
     # Store list of EagerValue created by executor.create_call
     # in a FederatingExecutorValue with the key onwer placement
@@ -112,8 +123,8 @@ class EasyBoxChannel(Channel):
     self.key_references.add_keys(key_owner.name, pk_vals, sk_fed_vals)
 
   async def _share_public_keys(self, key_owner, send_pks_to):
-    pk = self.key_references.get_public_key(key_owner.name)
-    pk_fed_vals = await self._place_keys(pk, send_pks_to)
+    public_key = self.key_references.get_public_key(key_owner.name)
+    pk_fed_vals = await self._place_keys(public_key, send_pks_to)
     self.key_references.update_keys(key_owner.name, pk_fed_vals)
 
   async def _encrypt_values_on_sender(self, val, sender=None, receiver=None):
@@ -135,7 +146,7 @@ class EasyBoxChannel(Channel):
     sk_snd_type = sk_sender.type_signature.member
 
     if not self._encrypt_tensor_fn:
-      self._encrypt_tensor_fn = self._encrypt_tensor(input_tensor_type,
+      self._encrypt_tensor_fn = _encrypt_tensor(input_tensor_type,
                                                      pk_rcv_type, sk_snd_type)
 
     fn_type = self._encrypt_tensor_fn.type_signature
@@ -146,7 +157,7 @@ class EasyBoxChannel(Channel):
     else:
       tensor_type = val[0].type_signature
 
-    val_type = computation_types.FederatedType(
+    val_type = tff.FederatedType(
         tensor_type, self.sender_placement, all_equal=False)
 
     val_key_zipped = await self._zip_val_key(
@@ -163,7 +174,7 @@ class EasyBoxChannel(Channel):
         federating_executor.FederatingExecutorValue(
             anonymous_tuple.AnonymousTuple([(None, fn),
                                             (None, val_key_zipped)]),
-            computation_types.NamedTupleType((fn_type, val_type))))
+            tff.NamedTupleType((fn_type, val_type))))
 
     if sender != None or receiver != None:
       return val_encrypted.internal_representation[0]
@@ -189,15 +200,15 @@ class EasyBoxChannel(Channel):
     sk_snd_type = val[0].type_signature[2]
 
     if not self._decrypt_tensor_fn:
-      self._decrypt_tensor_fn = self._decrypt_tensor(
+      self._decrypt_tensor_fn = _decrypt_tensor(
           sender_values_type, pk_snd_type, sk_snd_type,
           self.orig_sender_tensor_dtype)
 
     fn_type = self._decrypt_tensor_fn.type_signature
     fn = self._decrypt_tensor_fn._computation_proto
 
-    val_type = computation_types.FederatedType(
-        computation_types.TensorType(self.orig_sender_tensor_dtype),
+    val_type = tff.FederatedType(
+        tff.TensorType(self.orig_sender_tensor_dtype),
         self.receiver_placement,
         all_equal=False)
 
@@ -206,47 +217,12 @@ class EasyBoxChannel(Channel):
     val_decrypted = await fed_ex.federated_map(
         federating_executor.FederatingExecutorValue(
             anonymous_tuple.AnonymousTuple([(None, fn), (None, val)]),
-            computation_types.NamedTupleType((fn_type, val_type))))
+            tff.NamedTupleType((fn_type, val_type))))
 
     if sender != None or receiver != None:
       return val_decrypted.internal_representation[0]
     else:
       return val_decrypted.internal_representation
-
-  def _encrypt_tensor(self, plaintext_type, pk_rcv_type, sk_snd_type):
-
-    @computations.tf_computation(plaintext_type, pk_rcv_type, sk_snd_type)
-    def encrypt_tensor(plaintext, pk_rcv, sk_snd):
-
-      pk_rcv = easy_box.PublicKey(pk_rcv)
-      sk_snd = easy_box.PublicKey(sk_snd)
-
-      nonce = easy_box.gen_nonce()
-      ciphertext, mac = easy_box.seal_detached(plaintext, nonce, pk_rcv, sk_snd)
-
-      return ciphertext.raw, mac.raw, nonce.raw
-
-    return encrypt_tensor
-
-  def _decrypt_tensor(self, sender_values_type, pk_snd_type, sk_rcv_snd,
-                      orig_sender_tensor_dtype):
-
-    @computations.tf_computation(sender_values_type, pk_snd_type, sk_rcv_snd)
-    def decrypt_tensor(sender_values, pk_snd, sk_rcv):
-
-      ciphertext = easy_box.Ciphertext(sender_values[0])
-      mac = easy_box.Mac(sender_values[1])
-      nonce = easy_box.Nonce(sender_values[2])
-      sk_rcv = easy_box.SecretKey(sk_rcv)
-      pk_snd = easy_box.PublicKey(pk_snd)
-
-      plaintext_recovered = easy_box.open_detached(ciphertext, mac, nonce,
-                                                   pk_snd, sk_rcv,
-                                                   orig_sender_tensor_dtype)
-
-      return plaintext_recovered
-
-    return decrypt_tensor
 
   async def _zip_val_key(self,
                          placement,
@@ -257,10 +233,10 @@ class EasyBoxChannel(Channel):
                          sk_index=None):
 
     if isinstance(vals, list):
-      val_type = computation_types.FederatedType(
+      val_type = tff.FederatedType(
           vals[0].type_signature, placement, all_equal=False)
     else:
-      val_type = computation_types.FederatedType(
+      val_type = tff.FederatedType(
           vals.type_signature, placement, all_equal=False)
       vals = [vals]
 
@@ -276,7 +252,7 @@ class EasyBoxChannel(Channel):
     vals_key = federating_executor.FederatingExecutorValue(
         anonymous_tuple.AnonymousTuple([(None, vals), (None, pk_key_vals),
                                         (None, sk_key_vals)]),
-        computation_types.NamedTupleType(
+        tff.NamedTupleType(
             (val_type, pk_key.type_signature, sk_key.type_signature)))
 
     vals_key_zipped = await self.parent_executor._zip(
@@ -298,7 +274,7 @@ class EasyBoxChannel(Channel):
               c.create_value(await keys[i].compute(), keys_type_signature)
               for (i, c) in enumerate(children)
           ]),
-          computation_types.FederatedType(
+          tff.FederatedType(
               keys_type_signature, placement, all_equal=False))
     # Scenario: there are more keys than exectutors. For example
     # there are 3 clients and each have a public key. Each client wants
@@ -311,7 +287,7 @@ class EasyBoxChannel(Channel):
               child.create_value(await k.compute(), keys_type_signature)
               for k in keys
           ]),
-          computation_types.FederatedType(
+          tff.FederatedType(
               keys_type_signature, placement, all_equal=False))
     # Scenario: there are more exectutors than keys. For example
     # there is an aggregator with one public key. The aggregator
@@ -323,8 +299,44 @@ class EasyBoxChannel(Channel):
               c.create_value(await keys[0].compute(), keys_type_signature)
               for c in children
           ]),
-          computation_types.FederatedType(
+          tff.FederatedType(
               keys_type_signature, placement, all_equal=True))
+
+
+def _encrypt_tensor(plaintext_type, pk_rcv_type, sk_snd_type):
+
+  @computations.tf_computation(plaintext_type, pk_rcv_type, sk_snd_type)
+  def encrypt_tensor(plaintext, pk_rcv, sk_snd):
+
+    pk_rcv = easy_box.PublicKey(pk_rcv)
+    sk_snd = easy_box.PublicKey(sk_snd)
+
+    nonce = easy_box.gen_nonce()
+    ciphertext, mac = easy_box.seal_detached(plaintext, nonce, pk_rcv, sk_snd)
+
+    return ciphertext.raw, mac.raw, nonce.raw
+
+  return encrypt_tensor
+
+def _decrypt_tensor(sender_values_type, pk_snd_type, sk_rcv_snd,
+                    orig_sender_tensor_dtype):
+
+  @computations.tf_computation(sender_values_type, pk_snd_type, sk_rcv_snd)
+  def decrypt_tensor(sender_values, pk_snd, sk_rcv):
+
+    ciphertext = easy_box.Ciphertext(sender_values[0])
+    mac = easy_box.Mac(sender_values[1])
+    nonce = easy_box.Nonce(sender_values[2])
+    sk_rcv = easy_box.SecretKey(sk_rcv)
+    pk_snd = easy_box.PublicKey(pk_snd)
+
+    plaintext_recovered = easy_box.open_detached(ciphertext, mac, nonce,
+                                                  pk_snd, sk_rcv,
+                                                  orig_sender_tensor_dtype)
+
+    return plaintext_recovered
+
+  return decrypt_tensor
 
 
 @dataclass
@@ -342,8 +354,8 @@ class KeyStore:
   def __init__(self):
     self.key_store = {}
 
-  def add_keys(self, key_owner, pk, sk):
-    self.key_store[key_owner] = {'pk': pk, 'sk': sk}
+  def add_keys(self, key_owner, public_key, secret_key):
+    self.key_store[key_owner] = {'pk': public_key, 'sk': secret_key}
 
   def get_public_key(self, key_owner):
     return self.key_store[key_owner]['pk']
@@ -351,8 +363,8 @@ class KeyStore:
   def get_secret_key(self, key_owner):
     return self.key_store[key_owner]['sk']
 
-  def update_keys(self, key_owner, pk=None, sk=None):
-    if pk:
-      self.key_store[key_owner]['pk'] = pk
-    if sk:
-      self.key_store[key_owner]['sk'] = sk
+  def update_keys(self, key_owner, public_key=None, secret_key=None):
+    if public_key:
+      self.key_store[key_owner]['pk'] = public_key
+    if secret_key:
+      self.key_store[key_owner]['sk'] = secret_key
