@@ -4,6 +4,7 @@ from typing import Tuple, Dict
 
 import asyncio
 
+from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computations
 from tensorflow_federated.python.core.api import computation_types
@@ -156,11 +157,10 @@ class EasyBoxChannel(Channel):
         pk_index=receiver,
         sk_index=sender)
 
-    # NOTE probably won't always be fed_ex in future design
-    fed_ex = self.parent_executor.federating_executor
+    fed_ex = self.parent_executor
 
-    val_encrypted = await fed_ex._compute_intrinsic_federated_map(
-        FederatingExecutorValue(
+    val_encrypted = await fed_ex.federated_map(
+        federating_executor.FederatingExecutorValue(
             anonymous_tuple.AnonymousTuple([(None, fn),
                                             (None, val_key_zipped)]),
             computation_types.NamedTupleType((fn_type, val_type))))
@@ -201,11 +201,10 @@ class EasyBoxChannel(Channel):
         self.receiver_placement,
         all_equal=False)
 
-    # NOTE probably won't always be fed_ex in future design
-    fed_ex = self.parent_executor.federating_executor
+    fed_ex = self.parent_executor
 
-    val_decrypted = await fed_ex._compute_intrinsic_federated_map(
-        FederatingExecutorValue(
+    val_decrypted = await fed_ex.federated_map(
+        federating_executor.FederatingExecutorValue(
             anonymous_tuple.AnonymousTuple([(None, fn), (None, val)]),
             computation_types.NamedTupleType((fn_type, val_type))))
 
@@ -274,7 +273,7 @@ class EasyBoxChannel(Channel):
     if sk_index != None:
       sk_key_vals = [sk_key_vals[sk_index]]
 
-    vals_key = FederatingExecutorValue(
+    vals_key = federating_executor.FederatingExecutorValue(
         anonymous_tuple.AnonymousTuple([(None, vals), (None, pk_key_vals),
                                         (None, sk_key_vals)]),
         computation_types.NamedTupleType(
@@ -294,7 +293,7 @@ class EasyBoxChannel(Channel):
     # there are 3 clients and each should have a secret key
     if len(keys) == len(children):
       keys_type_signature = keys[0].type_signature
-      return FederatingExecutorValue(
+      return federating_executor.FederatingExecutorValue(
           await asyncio.gather(*[
               c.create_value(await keys[i].compute(), keys_type_signature)
               for (i, c) in enumerate(children)
@@ -307,7 +306,7 @@ class EasyBoxChannel(Channel):
     elif (len(children) == 1) & (len(children) < len(keys)):
       keys_type_signature = keys[0].type_signature
       child = children[0]
-      return FederatingExecutorValue(
+      return federating_executor.FederatingExecutorValue(
           await asyncio.gather(*[
               child.create_value(await k.compute(), keys_type_signature)
               for k in keys
@@ -319,7 +318,7 @@ class EasyBoxChannel(Channel):
     # wants to share the samer public key to 3 different clients.
     elif (len(keys) == 1) & (len(children) > len(keys)):
       keys_type_signature = keys[0].type_signature
-      return FederatingExecutorValue(
+      return federating_executor.FederatingExecutorValue(
           await asyncio.gather(*[
               c.create_value(await keys[0].compute(), keys_type_signature)
               for c in children

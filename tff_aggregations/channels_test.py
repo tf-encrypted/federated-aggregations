@@ -4,104 +4,95 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import asyncio
+import tensorflow as tf
+import tensorflow_federated as tff
 
-from tensorflow_federated.python.core.api import computation_types
 from tensorflow_federated.python.core.impl.compiler import placement_literals
 from tensorflow_federated.python.core.impl.executors import federating_executor
 
 from tff_aggregations import channels
-from tff_aggregations.paillier import factory
-from tff_aggregations.paillier import placement as paillier_placement
+from tff_aggregations import channels_test_utils
 
 
-# NOTE AsycTestCase should be imported from tff
-class AsyncTestCase(absltest.TestCase):
-  """A test case that manages a new event loop for each test.
+def create_test_executor(number_of_clients: int = 3):
 
-  Each test will have a new event loop instead of using the current event loop.
-  This ensures that tests are isolated from each other and avoid unexpected side
-  effects.
+  def create_bottom_stack():
+    executor = tff.framework.EagerTFExecutor()
+    # NOTE why do we need ReferenceResolvingExecutor?
+    # return tff.framework.ReferenceResolvingExecutor(executor)
+    return executor
 
-  Attributes:
-    loop: An `asyncio` event loop.
-  """
+  channel_grid = channels.ChannelGrid({
+      (tff.CLIENTS, tff.SERVER): channels.StubChannel()})
 
-  def setUp(self):
-    super().setUp()
-    self.loop = asyncio.new_event_loop()
+  def intrinsic_strategy_fn(executor):
+    return channels_test_utils.MockStrategy(executor, channel_grid)
 
-    # If `setUp()` fails, then `tearDown()` is not called; however cleanup
-    # functions will be called. Register the newly created loop `close()`
-    # function here to ensure it is closed after each test.
-    self.addCleanup(self.loop.close)
+  return tff.framework.FederatingExecutor({
+      tff.SERVER: create_bottom_stack(),
+      tff.CLIENTS: [create_bottom_stack() for _ in range(number_of_clients)],
+      None: create_bottom_stack()},
+      intrinsic_strategy_fn=intrinsic_strategy_fn)
 
-  def run_sync(self, coro):
-    return self.loop.run_until_complete(coro)
-
-
-# class EasyBoxChannelTest(executor_service_utils.AsyncTestCase):
-class EasyBoxChannelTest(executor_test_utils.AsyncTestCase):
+class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
 
   def test_generate_aggregator_keys(self):
-    # strategy = federating_executor.TrustedAggregatorIntrinsicStrategy
-    # loop, ex = _make_test_runtime(intrinsic_strategy_fn=strategy)
-    # strat_ex = ex.intrinsic_strategy
 
-    strat_ex = federating_executor.CentralizedIntrinsicStrategy
+    fed_ex = create_test_executor()
+    strat = fed_ex.intrinsic_strategy
 
     channel_grid = channels.ChannelGrid({
-        (placement_literals.CLIENTS, paillier_placement.PAILLIER):
+        (placement_literals.CLIENTS, placement_literals.SERVER):
             channels.EasyBoxChannel(
-                parent_executor=strat_ex,
+                parent_executor=strat,
                 sender_placement=placement_literals.CLIENTS,
-                receiver_placement=paillier_placement.PAILLIER)
+                receiver_placement=placement_literals.SERVER)
     })
 
     channel = channel_grid[(placement_literals.CLIENTS,
-                            paillier_placement.PAILLIER)]
+                            placement_literals.SERVER)]
 
     self.run_sync(channel.setup())
-    
-    # loop.run_until_complete(channel.setup())
-    # key_references = channel.key_references
+    key_references = channel.key_references
 
-    # pk_c = key_references.get_public_key(placement_literals.CLIENTS.name)
-    # sk_c = key_references.get_secret_key(placement_literals.CLIENTS.name)
-    # pk_a = key_references.get_public_key(placement_literals.AGGREGATORS.name)
-    # sk_a = key_references.get_secret_key(placement_literals.AGGREGATORS.name)
+    pk_c = key_references.get_public_key(placement_literals.CLIENTS.name)
+    sk_c = key_references.get_secret_key(placement_literals.CLIENTS.name)
+    pk_a = key_references.get_public_key(placement_literals.SERVER.name)
+    sk_a = key_references.get_secret_key(placement_literals.SERVER.name)
 
-    # self.assertEqual(str(pk_c.type_signature), '{uint8[32]}@AGGREGATORS')
-    # self.assertEqual(str(sk_c.type_signature), '{uint8[32]}@CLIENTS')
-    # self.assertEqual(str(pk_a.type_signature), '{uint8[32]}@CLIENTS')
-    # self.assertEqual(str(sk_a.type_signature), '{uint8[32]}@AGGREGATORS')
+    self.assertEqual(str(pk_c.type_signature), '{uint8[32]}@SERVER')
+    self.assertEqual(str(sk_c.type_signature), '{uint8[32]}@CLIENTS')
+    # NOTE check why type_signature is not consistent
+    self.assertEqual(str(pk_a.type_signature), 'uint8[32]@CLIENTS')
+    self.assertEqual(str(sk_a.type_signature), '{uint8[32]}@SERVER')
 
-#   def test_encryption_decryption(self):
+  def test_encryption_decryption(self):
 
-#     strategy = federating_executor.TrustedAggregatorIntrinsicStrategy
-#     loop, ex = _make_test_runtime(intrinsic_strategy_fn=strategy)
-#     strat_ex = ex.intrinsic_strategy
+    fed_ex = create_test_executor(1)
+    strat = fed_ex.intrinsic_strategy
 
-#     channel_grid = channel_base.ChannelGrid({
-#         (placement_literals.AGGREGATORS, placement_literals.CLIENTS):
-#             federating_executor.EasyBoxChannel(
-#                 parent_executor=strat_ex,
-#                 sender_placement=placement_literals.CLIENTS,
-#                 receiver_placement=placement_literals.AGGREGATORS)
-#     })
+    channel_grid = channels.ChannelGrid({
+        (placement_literals.CLIENTS, placement_literals.SERVER):
+            channels.EasyBoxChannel(
+                parent_executor=strat,
+                sender_placement=placement_literals.CLIENTS,
+                receiver_placement=placement_literals.SERVER)
+    })
 
-#     channel = channel_grid[(placement_literals.CLIENTS,
-#                             placement_literals.AGGREGATORS)]
-#     loop.run_until_complete(channel.setup())
+    channel = channel_grid[(placement_literals.CLIENTS,
+                            placement_literals.SERVER)]
 
-#     val = loop.run_until_complete(
-#         ex.create_value([2.0], type_factory.at_clients(tf.float32)))
+    self.run_sync(channel.setup())
 
-#     val_enc = loop.run_until_complete(
-#         channel.send(val.internal_representation[0]))
+    val = self.run_sync(
+        fed_ex.create_value([2.0], tff.FederatedType(tf.float32, tff.CLIENTS)))
 
-#     val_dec = loop.run_until_complete(
-#         channel.receive(val_enc))
+    val_enc = self.run_sync(
+        channel.send(val.internal_representation[0]))
 
-#     dec_tf_tensor = val_dec[0].internal_representation
+    val_dec = self.run_sync(
+        channel.receive(val_enc))
 
-#     self.assertEqual(dec_tf_tensor, tf.constant(2.0, dtype=tf.float32))
+    dec_tf_tensor = val_dec[0].internal_representation
+
+    self.assertEqual(dec_tf_tensor, tf.constant(2.0, dtype=tf.float32))
