@@ -81,6 +81,10 @@ class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
     fed_ex = create_test_executor(1)
     strat = fed_ex.intrinsic_strategy
 
+    # Will have to figure out how EasyBoxChannel gets access to 
+    # target_executors, and methods from CentralizedIntrinsicStrategy
+    # if it's instanciated from outside the PaillierStrategy
+    # (currently provided from fed_ex.intrinsic_strategy)
     channel_grid = channels.ChannelGrid({
         (placement_literals.CLIENTS, placement_literals.SERVER):
             channels.EasyBoxChannel(
