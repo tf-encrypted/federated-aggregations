@@ -17,7 +17,9 @@ def paillier_keygen(bitlength=2048):
   @tff.tf_computation
   def _keygen():
     encryption_key, decryption_key = paillier.gen_keypair(bitlength)
-    return encryption_key.export(), decryption_key.export()
+    ek_raw = encryption_key.export(dtype=tf.string)
+    dk_raw = decryption_key.export(dtype=tf.string)
+    return ek_raw, dk_raw
 
   return _keygen
 
@@ -27,7 +29,8 @@ def _paillier_encrypt():
   @tff.tf_computation
   def _encrypt(encryption_key_raw, plaintext):
     ek = paillier.EncryptionKey(encryption_key_raw)
-    return paillier.encrypt(ek, plaintext)
+    ciphertext = paillier.encrypt(ek, plaintext)
+    return ciphertext.export(dtype=tf.string)
 
   return _encrypt
 
@@ -38,9 +41,9 @@ def _paillier_decrypt(dtype):
   # could also pass it directly to the tf_computation as a tf.string tensor,
   # but that feels like a hack
 
-  @tff.tf_computation((tf.string, tf.string), tf.string, dtype)
+  @tff.tf_computation((tf.string, tf.string), tf.string, tf.string)
   def _decrypt(decryption_key_raw, encryption_key_raw, ciphertext_raw):
-    dk = paillier.DecryptionKey(decryption_key_raw)
+    dk = paillier.DecryptionKey(*decryption_key_raw)
     ek = paillier.EncryptionKey(encryption_key_raw)
     ciphertext = paillier.Ciphertext(ek, ciphertext_raw)
     return paillier.decrypt(dk, ciphertext, dtype)
@@ -51,11 +54,15 @@ def _paillier_decrypt(dtype):
 def _paillier_sequence_sum():
 
   @tff.tf_computation
-  def _sequence_sum(encryption_key, *summands):
-    result = summands[0]
+  def _sequence_sum(encryption_key_raw, *summands_raw):
+    ek = paillier.EncryptionKey(encryption_key_raw)
+    result = Ciphertext(ek, summands[0])
+
     for summand in summands[1:]:
-      result = paillier.add(encryption_key, result, summand, do_refresh=False)
-    return paillier.refresh(encryption_key, result)
+      summand = paillier.Ciphertext(ek, summand)
+      result = paillier.add(ek, result, summand, do_refresh=False)
+    refreshed_sum = paillier.refresh(ek, result)
+    return refreshed_sum.export(dtype=tf.string)
 
   return _sequence_sum
 
