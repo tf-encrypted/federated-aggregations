@@ -18,9 +18,7 @@ def create_test_executor(number_of_clients: int = 3):
 
   def create_bottom_stack():
     executor = tff.framework.EagerTFExecutor()
-    # NOTE why do we need ReferenceResolvingExecutor?
-    # return tff.framework.ReferenceResolvingExecutor(executor)
-    return executor
+    return tff.framework.ReferenceResolvingExecutor(executor)
 
   def intrinsic_strategy_fn(executor):
     return federating_executor.CentralizedIntrinsicStrategy(executor)
@@ -107,6 +105,6 @@ class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
     val_dec = self.run_sync(
         channel.receive(val_enc))
 
-    dec_tf_tensor = val_dec[0].internal_representation
+    dec_tf_tensor = self.run_sync(val_dec[0].compute())
 
     self.assertEqual(dec_tf_tensor, tf.constant(2.0, dtype=tf.float32))
