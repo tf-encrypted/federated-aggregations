@@ -56,9 +56,9 @@ class PlaintextChannel(Channel):
 
 class EasyBoxChannel(Channel):
 
-  def __init__(self, parent_executor, sender_placement, receiver_placement):
+  def __init__(self, strategy, sender_placement, receiver_placement):
 
-    self.parent_executor = parent_executor
+    self.strategy = strategy
     self.sender_placement = sender_placement
     self.receiver_placement = receiver_placement
 
@@ -100,7 +100,7 @@ class EasyBoxChannel(Channel):
     fn_type = generate_keys.type_signature
     fn = generate_keys._computation_proto
 
-    executors = self.parent_executor._get_child_executors(key_owner)
+    executors = self.strategy._get_child_executors(key_owner)
 
     nb_executors = len(executors)
     sk_vals = []
@@ -130,7 +130,7 @@ class EasyBoxChannel(Channel):
   async def _encrypt_values_on_sender(self, val, sender=None, receiver=None):
 
     nb_senders = len(
-        self.parent_executor._get_child_executors(self.sender_placement))
+        self.strategy._get_child_executors(self.sender_placement))
 
     if nb_senders == 1:
       input_tensor_type = val.type_signature
@@ -168,9 +168,9 @@ class EasyBoxChannel(Channel):
         pk_index=receiver,
         sk_index=sender)
 
-    fed_ex = self.parent_executor
+    strat = self.strategy
 
-    val_encrypted = await fed_ex.federated_map(
+    val_encrypted = await strat.federated_map(
         federating_executor.FederatingExecutorValue(
             anonymous_tuple.AnonymousTuple([(None, fn),
                                             (None, val_key_zipped)]),
@@ -212,9 +212,9 @@ class EasyBoxChannel(Channel):
         self.receiver_placement,
         all_equal=False)
 
-    fed_ex = self.parent_executor
+    strat = self.strategy
 
-    val_decrypted = await fed_ex.federated_map(
+    val_decrypted = await strat.federated_map(
         federating_executor.FederatingExecutorValue(
             anonymous_tuple.AnonymousTuple([(None, fn), (None, val)]),
             tff.NamedTupleType((fn_type, val_type))))
@@ -255,7 +255,7 @@ class EasyBoxChannel(Channel):
         tff.NamedTupleType(
             (val_type, pk_key.type_signature, sk_key.type_signature)))
 
-    vals_key_zipped = await self.parent_executor._zip(
+    vals_key_zipped = await self.strategy._zip(
         vals_key, placement, all_equal=False)
 
     return vals_key_zipped.internal_representation
@@ -263,7 +263,7 @@ class EasyBoxChannel(Channel):
   async def _place_keys(self, keys, placement):
 
     py_typecheck.check_type(placement, placement_literals.PlacementLiteral)
-    children = self.parent_executor._get_child_executors(placement)
+    children = self.strategy._get_child_executors(placement)
 
     # Scenario: there are as many keys as exectutors. For example
     # there are 3 clients and each should have a secret key
