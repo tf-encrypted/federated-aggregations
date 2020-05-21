@@ -51,7 +51,7 @@ class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
 
   def test_generate_aggregator_keys(self):
 
-    fed_ex = create_test_executor()
+    fed_ex = create_test_executor(1)
   
     channel_grid = fed_ex.intrinsic_strategy.channel_grid
     
@@ -68,8 +68,7 @@ class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
 
     self.assertEqual(str(pk_c.type_signature), '{uint8[32]}@SERVER')
     self.assertEqual(str(sk_c.type_signature), '{uint8[32]}@CLIENTS')
-    # NOTE check why type_signature is not consistent
-    self.assertEqual(str(pk_a.type_signature), 'uint8[32]@CLIENTS')
+    self.assertEqual(str(pk_a.type_signature), '{uint8[32]}@CLIENTS')
     self.assertEqual(str(sk_a.type_signature), '{uint8[32]}@SERVER')
 
   def test_encryption_decryption(self):

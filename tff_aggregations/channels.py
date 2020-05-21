@@ -288,7 +288,7 @@ class EasyBoxChannel(Channel):
               for k in keys
           ]),
           tff.FederatedType(
-              keys_type_signature, placement, all_equal=False))
+              tff.SequenceType(keys_type_signature), placement, all_equal=False))
     # Scenario: there are more exectutors than keys. For example
     # there is an aggregator with one public key. The aggregator
     # wants to share the samer public key to 3 different clients.
