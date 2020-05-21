@@ -342,6 +342,13 @@ def _decrypt_tensor(sender_values_type, pk_snd_type, sk_rcv_snd,
 @dataclass
 class ChannelGrid:
   channel_dict: Dict[PlacementPair, Channel]
+  requires_setup: bool = True
+
+  def setup_channels(self, strategy):
+    for placement_pair in self.channel_dict:
+      channel_cls = self.channel_dict[placement_pair]
+      self.channel_dict[placement_pair] = channel_cls(strategy, *placement_pair)
+    self.requires_setup = False
 
   def __getitem__(self, placements: PlacementPair):
     py_typecheck.check_type(placements, tuple)

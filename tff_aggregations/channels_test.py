@@ -20,8 +20,13 @@ def create_test_executor(number_of_clients: int = 3):
     executor = tff.framework.EagerTFExecutor()
     return tff.framework.ReferenceResolvingExecutor(executor)
 
+  channel_grid = channels.ChannelGrid({
+        (placement_literals.CLIENTS, placement_literals.SERVER):
+            channels.EasyBoxChannel
+    })
+
   def intrinsic_strategy_fn(executor):
-    return federating_executor.CentralizedIntrinsicStrategy(executor)
+    return channels_test_utils.MockStrategy(executor, channel_grid)
 
   return tff.framework.FederatingExecutor({
       tff.SERVER: create_bottom_stack(),
@@ -47,16 +52,9 @@ class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
   def test_generate_aggregator_keys(self):
 
     fed_ex = create_test_executor()
-    strat = fed_ex.intrinsic_strategy
-
-    channel_grid = channels.ChannelGrid({
-        (placement_literals.CLIENTS, placement_literals.SERVER):
-            channels.EasyBoxChannel(
-                parent_executor=strat,
-                sender_placement=placement_literals.CLIENTS,
-                receiver_placement=placement_literals.SERVER)
-    })
-
+  
+    channel_grid = fed_ex.intrinsic_strategy.channel_grid
+    
     channel = channel_grid[(placement_literals.CLIENTS,
                             placement_literals.SERVER)]
 
@@ -77,19 +75,8 @@ class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
   def test_encryption_decryption(self):
 
     fed_ex = create_test_executor(1)
-    strat = fed_ex.intrinsic_strategy
-
-    # Will have to figure out how EasyBoxChannel gets access to 
-    # target_executors, and methods from CentralizedIntrinsicStrategy
-    # if it's instanciated from outside the PaillierStrategy
-    # (currently provided from fed_ex.intrinsic_strategy)
-    channel_grid = channels.ChannelGrid({
-        (placement_literals.CLIENTS, placement_literals.SERVER):
-            channels.EasyBoxChannel(
-                parent_executor=strat,
-                sender_placement=placement_literals.CLIENTS,
-                receiver_placement=placement_literals.SERVER)
-    })
+    
+    channel_grid = fed_ex.intrinsic_strategy.channel_grid
 
     channel = channel_grid[(placement_literals.CLIENTS,
                             placement_literals.SERVER)]
