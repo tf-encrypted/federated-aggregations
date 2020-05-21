@@ -38,20 +38,20 @@ def create_test_executor(number_of_clients: int = 3):
       intrinsic_strategy_fn=intrinsic_strategy_fn)
 
 
-# class PaillierStrategyTest(parameterized.TestCase):
-#   @parameterized.named_parameters(
-#       ('paillier_executor_factory_none_clients',
-#       factory.local_paillier_executor_factory()),
-#       ('paillier_executor_factory_five_clients',
-#       factory.local_paillier_executor_factory(num_clients=5)),
-#   )
-#   def test_federated_secure_sum(self, factory):
-#     @tff.federated_computation(tff.FederatedType(tf.int32, tff.CLIENTS))
-#     def secure_paillier_addition(x):
-#       bitwidth = 8  # assume upper-bound of 2^8 on summation result
-#       return tff.federated_secure_sum(x, bitwidth)
+class PaillierStrategyTest(parameterized.TestCase):
+  @parameterized.named_parameters(
+      ('paillier_executor_factory_none_clients',
+      factory.local_paillier_executor_factory()),
+      ('paillier_executor_factory_five_clients',
+      factory.local_paillier_executor_factory(num_clients=5)),
+  )
+  def test_federated_secure_sum(self, factory):
+    @tff.federated_computation(tff.FederatedType(tf.int32, tff.CLIENTS))
+    def secure_paillier_addition(x):
+      bitwidth = 8  # assume upper-bound of 2^8 on summation result
+      return tff.federated_secure_sum(x, bitwidth)
 
-#     with _install_executor(factory):
-#       result = secure_paillier_addition([1, 2, 3, 4, 5])
+    with _install_executor(factory):
+      result = secure_paillier_addition([1, 2, 3, 4, 5])
 
-#     self.assertAlmostEqual(result, 15.0)
+    self.assertAlmostEqual(result, 15.0)
