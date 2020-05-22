@@ -271,7 +271,7 @@ class EasyBoxChannel(Channel):
       keys_type_signature = keys[0].type_signature
       return federating_executor.FederatingExecutorValue(
           await asyncio.gather(*[
-              c.create_value(await keys[i].compute(), keys_type_signature)
+              c.create_value(keys[i].internal_representation, keys_type_signature)
               for (i, c) in enumerate(children)
           ]),
           tff.FederatedType(
@@ -284,7 +284,7 @@ class EasyBoxChannel(Channel):
       child = children[0]
       return federating_executor.FederatingExecutorValue(
           await asyncio.gather(*[
-              child.create_value(await k.compute(), keys_type_signature)
+              child.create_value(k.internal_representation, keys_type_signature)
               for k in keys
           ]),
           tff.FederatedType(
@@ -296,7 +296,7 @@ class EasyBoxChannel(Channel):
       keys_type_signature = keys[0].type_signature
       return federating_executor.FederatingExecutorValue(
           await asyncio.gather(*[
-              c.create_value(await keys[0].compute(), keys_type_signature)
+              c.create_value(keys[0].internal_representation, keys_type_signature)
               for c in children
           ]),
           tff.FederatedType(
