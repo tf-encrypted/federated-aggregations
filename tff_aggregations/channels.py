@@ -124,10 +124,30 @@ class EasyBoxChannel(Channel):
     self.key_references.update_keys(
         key_owner, public_key=pk_fed_val, secret_key=sk_fed_val)
 
-  async def _share_public_keys(self, key_owner, send_pks_to):
-    public_key = self.key_references.get_public_key(key_owner.name)
-    pk_fed_vals = await self._place_keys(public_key, send_pks_to)
-    self.key_references.update_keys(key_owner.name, pk_fed_vals)
+  async def _share_public_key(self, key_owner, key_receiver):
+    public_key = self.key_references.get_public_key(key_owner)
+    children = self.strategy._get_child_executors(key_receiver)
+    val = await public_key.compute()
+    key_type = public_key.type_signature.member
+    fed_key_type = tff.FederatedType(key_type, key_receiver, all_equal=True)
+
+    # we currently only support sharing n keys with 1 executor, 
+    # or sharing 1 key with n executors
+    if isinstance(val, list):
+      # sharing n keys with 1 executor
+      py_typecheck.check_len(children, 1)
+      executor = children[0]
+      vals = [executor.create_value(v, key_type) for v in val]
+      vals_type = tff.NamedTupleType(
+          [(None, fed_key_type) for _ in range(len(val))])
+    else:
+      # sharing 1 key with n executors
+      # val is a single tensor
+      vals = [c.create_value(val, key_type) for c in children]
+      vals_type = fed_key_type
+    public_key_rcv = federating_executor.FederatingExecutorValue(
+        await asyncio.gather(*vals), vals_type)
+    self.key_references.update_keys(key_owner, public_key=public_key_rcv)
 
   async def _encrypt_values_on_sender(self, val, sender=None, receiver=None):
 
