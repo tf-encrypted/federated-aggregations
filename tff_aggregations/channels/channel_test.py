@@ -10,52 +10,19 @@ import tensorflow_federated as tff
 from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
 
-from tff_aggregations import channels
-from tff_aggregations import channels_test_utils
-
-def create_bottom_stack():
-  executor = tff.framework.EagerTFExecutor()
-  return tff.framework.ReferenceResolvingExecutor(executor)
+from tff_aggregations.channels import channel as ch
+from tff_aggregations.channels import channel_grid as grid
+from tff_aggregations.channels import channel_test_utils as utils
 
 
-def create_test_executor(
-    number_of_clients: int = 3,
-    channel_grid: channels.ChannelGrid = None,
-    channel: channels.Channel = channels.EasyBoxChannel):
-  if channel_grid is None:
-    channel_grid = channels.ChannelGrid({(tff.CLIENTS, tff.SERVER): channel})
-
-  def intrinsic_strategy_fn(executor):
-    return channels_test_utils.MockStrategy(executor, channel_grid)
-
-  return tff.framework.FederatingExecutor({
-      tff.SERVER: create_bottom_stack(),
-      tff.CLIENTS: [create_bottom_stack() for _ in range(number_of_clients)],
-      None: create_bottom_stack()},
-      intrinsic_strategy_fn=intrinsic_strategy_fn)
-
-
-class ChannelGridTest(channels_test_utils.AsyncTestCase):
-  def test_channel_grid_setup(self):
-    channel_grid = channels.ChannelGrid(
-        {(tff.CLIENTS, tff.SERVER): channels.PlaintextChannel})
-    ex = create_test_executor(channel_grid=channel_grid)
-    self.run_sync(channel_grid.setup_channels(ex.intrinsic_strategy))
-
-    channel = channel_grid[(tff.CLIENTS, tff.SERVER)]
-
-    assert isinstance(channel, channels.PlaintextChannel)
-
-
-class PlaintextChannelTest(channels_test_utils.AsyncTestCase):
+class PlaintextChannelTest(utils.AsyncTestCase):
   def test_send_receive(self):
-    fed_ex = create_test_executor(channel=channels.PlaintextChannel)
+    fed_ex = utils.create_test_executor(channel=ch.PlaintextChannel)
     strategy = fed_ex.intrinsic_strategy
     channel_grid = strategy.channel_grid
     self.run_sync(channel_grid.setup_channels(strategy))
 
-    channel = channel_grid[(placement_literals.CLIENTS,
-                            placement_literals.SERVER)]
+    channel = channel_grid[(tff.CLIENTS, tff.SERVER)]
     val = self.run_sync(fed_ex.create_value([2.0] * 3,
         tff.FederatedType(tf.float32, tff.CLIENTS)))
     sent = self.run_sync(channel.send(val))
@@ -69,12 +36,12 @@ class PlaintextChannelTest(channels_test_utils.AsyncTestCase):
     self.assertEqual(result, tf.constant([2.0] * 3, dtype=tf.float32))
 
 
-class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
+class EasyBoxChannelTest(utils.AsyncTestCase):
   def test_generate_aggregator_keys(self):
-    fed_ex = create_test_executor()
+    fed_ex = utils.create_test_executor()
     strategy = fed_ex.intrinsic_strategy
     channel_grid = strategy.channel_grid
-    self.run_sync(channel_grid.setup_channels(fed_ex.intrinsic_strategy))
+    self.run_sync(channel_grid.setup_channels(strategy))
     
     channel = channel_grid[(tff.CLIENTS, tff.SERVER)]
     pk_clients, sk_clients = channel.key_references.get_key_pair(tff.CLIENTS)
@@ -86,7 +53,7 @@ class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
     self.assertEqual(str(sk_server.type_signature), 'uint8[32]@SERVER')
 
   def test_encryption_decryption(self):
-    fed_ex = create_test_executor()
+    fed_ex = utils.create_test_executor()
     strategy = fed_ex.intrinsic_strategy
     channel_grid = strategy.channel_grid
     self.run_sync(channel_grid.setup_channels(fed_ex.intrinsic_strategy))

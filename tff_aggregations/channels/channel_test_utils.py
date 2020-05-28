@@ -1,4 +1,3 @@
-  
 # Lint as: python3
 # Copyright 2019, The TensorFlow Federated Authors.
 #
@@ -13,17 +12,39 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Utils for testing executors."""
+"""Utils for testing channels."""
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import asyncio
-import tensorflow_federated as tff
 
+import tensorflow_federated as tff
 from tensorflow_federated.python.core.impl.executors import federating_executor
 
-from tff_aggregations import channels
+from tff_aggregations.channels import channel_grid as grid
+from tff_aggregations.channels import channel as ch
+
+
+def create_bottom_stack():
+  executor = tff.framework.EagerTFExecutor()
+  return tff.framework.ReferenceResolvingExecutor(executor)
+
+
+def create_test_executor(
+    number_of_clients: int = 3,
+    channel_grid: grid.ChannelGrid = None,
+    channel: ch.Channel = ch.EasyBoxChannel):
+  if channel_grid is None:
+    channel_grid = grid.ChannelGrid({(tff.CLIENTS, tff.SERVER): channel})
+
+  def intrinsic_strategy_fn(executor):
+    return MockStrategy(executor, channel_grid)
+
+  return tff.framework.FederatingExecutor({
+      tff.SERVER: create_bottom_stack(),
+      tff.CLIENTS: [create_bottom_stack() for _ in range(number_of_clients)],
+      None: create_bottom_stack()},
+      intrinsic_strategy_fn=intrinsic_strategy_fn)
 
 
 class AsyncTestCase(absltest.TestCase):
@@ -54,6 +75,3 @@ class MockStrategy(federating_executor.CentralizedIntrinsicStrategy):
   def __init__(self, parent_executor, channel_grid=None):
     super().__init__(parent_executor)
     self.channel_grid = channel_grid
-
-    self.channel_grid.setup_channels(strategy=self)
-
