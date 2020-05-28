@@ -1,4 +1,5 @@
 import abc
+import collections
 from dataclasses import dataclass
 from typing import Tuple, Dict
 
@@ -8,12 +9,14 @@ import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computations
-from tensorflow_federated.python.core.impl.compiler import placement_literals
 from tensorflow_federated.python.core.impl.executors import federating_executor
+from tensorflow_federated.python.core.impl.types import placement_literals
 
 from tf_encrypted.primitives.sodium import easy_box
 
-PlacementPair = Tuple[placement_literals.PlacementLiteral, placement_literals.PlacementLiteral]
+PlacementPair = Tuple[
+    placement_literals.PlacementLiteral,
+    placement_literals.PlacementLiteral]
 
 
 class Channel(metaclass=abc.ABCMeta):
@@ -30,40 +33,43 @@ class Channel(metaclass=abc.ABCMeta):
   async def setup(self):
     pass
 
-# NOTE to delete once the rest of the code base
-# doesn't need it for prototyping
-class StubChannel(Channel):
-  def setup(self, placements): pass
-  def _keygen(self): pass
-  def _keyexchange(self): pass
-
-  async def send(self, value):
-    return value
-
-  async def receive(self, value):
-    return value
-
-
 class PlaintextChannel(Channel):
-  def setup(self, placements): pass
+  requires_setup: bool = False
+
+  def __init__(
+      self,
+      strategy,
+      sender: tff.framework.Placement,
+      receiver: tff.framework.Placement):
+    del sender
+    self.strategy = strategy
+    self.receiver = receiver
+
+  async def setup(self, placements): pass
 
   async def send(self, value):
     return value
 
   async def receive(self, value):
-    return value
+    if self.sender == tff.SERVER and self.receiver == tff.CLIENTS:
+      ex = self.strategy.executor
+      return await ex._compute_intrinsic_federated_broadcast(value)
+    return await self.strategy._place(value, self.receiver)
 
 
 class EasyBoxChannel(Channel):
 
-  def __init__(self, strategy, sender_placement, receiver_placement):
-
+  def __init__(
+      self,
+      strategy, 
+      sender: tff.framework.Placement,  
+      receiver: tff.framework.Placement): 
     self.strategy = strategy
-    self.sender_placement = sender_placement
-    self.receiver_placement = receiver_placement
+    self.sender_placement = sender
+    self.receiver_placement = receiver
 
     self.key_references = KeyStore()
-    self._is_channel_setup = False
+    self.requires_setup = True
 
     self._encrypt_tensor_fn = None
     self._decrypt_tensor_fn = None
@@ -168,9 +174,7 @@ class EasyBoxChannel(Channel):
         pk_index=receiver,
         sk_index=sender)
 
-    strat = self.strategy
-
-    val_encrypted = await strat.federated_map(
+    val_encrypted = await self.strategy.federated_map(
         federating_executor.FederatingExecutorValue(
             anonymous_tuple.AnonymousTuple([(None, fn),
                                             (None, val_key_zipped)]),
@@ -341,20 +345,25 @@ def _decrypt_tensor(sender_values_type, pk_snd_type, sk_rcv_snd,
 
 @dataclass
 class ChannelGrid:
-  channel_dict: Dict[PlacementPair, Channel]
+  _channel_dict: Dict[PlacementPair, Channel]
   requires_setup: bool = True
 
-  def setup_channels(self, strategy):
-    for placement_pair in self.channel_dict:
-      channel_cls = self.channel_dict[placement_pair]
-      self.channel_dict[placement_pair] = channel_cls(strategy, *placement_pair)
-    self.requires_setup = False
+  async def setup_channels(self, strategy):
+    if self.requires_setup:
+      for placement_pair in self._channel_dict:
+        channel_cls = self._channel_dict[placement_pair]
+        channel = channel_cls(strategy, *placement_pair)
+        if channel.requires_setup:
+          await channel.setup()
+          channel.requires_setup = False
+        self._channel_dict[placement_pair] = channel
+      self.requires_setup = False
 
   def __getitem__(self, placements: PlacementPair):
     py_typecheck.check_type(placements, tuple)
     py_typecheck.check_len(placements, 2)
     sorted_placements = sorted(placements, key=lambda p: p.uri)
-    return self.channel_dict.get(tuple(sorted_placements))
+    return self._channel_dict.get(tuple(sorted_placements))
 
 
 class KeyStore:
