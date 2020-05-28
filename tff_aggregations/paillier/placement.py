@@ -1,5 +1,4 @@
-from tensorflow_federated.python.core.impl.compiler import placement_literals
-
+from tensorflow_federated.python.core.impl.types import placement_literals
 
 PAILLIER = placement_literals.PlacementLiteral(
     'PAILLIER',
