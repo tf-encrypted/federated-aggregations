@@ -281,49 +281,6 @@ class EasyBoxChannel(Channel):
 
     return vals_key_zipped.internal_representation
 
-  async def _place_keys(self, keys, placement):
-
-    py_typecheck.check_type(placement, placement_literals.PlacementLiteral)
-    children = self.strategy._get_child_executors(placement)
-
-    # Scenario: there are as many keys as exectutors. For example
-    # there are 3 clients and each should have a secret key
-    if len(keys) == len(children):
-      keys_type_signature = keys[0].type_signature
-      return federating_executor.FederatingExecutorValue(
-          await asyncio.gather(*[
-              c.create_value(await keys[i].compute(), keys_type_signature)
-              for (i, c) in enumerate(children)
-          ]),
-          tff.FederatedType(
-              keys_type_signature, placement, all_equal=False))
-    # Scenario: there are more keys than exectutors. For example
-    # there are 3 clients and each have a public key. Each client wants
-    # to share its key to the same aggregator.
-    elif (len(children) == 1) & (len(children) < len(keys)):
-      keys_type_signature = keys[0].type_signature
-      child = children[0]
-      return federating_executor.FederatingExecutorValue(
-          await asyncio.gather(*[
-              child.create_value(await k.compute(), keys_type_signature)
-              for k in keys
-          ]),
-          tff.FederatedType(
-              tff.SequenceType(keys_type_signature), placement, all_equal=False))
-    # Scenario: there are more exectutors than keys. For example
-    # there is an aggregator with one public key. The aggregator
-    # wants to share the samer public key to 3 different clients.
-    elif (len(keys) == 1) & (len(children) > len(keys)):
-      keys_type_signature = keys[0].type_signature
-      return federating_executor.FederatingExecutorValue(
-          await asyncio.gather(*[
-              c.create_value(await keys[0].compute(), keys_type_signature)
-              for c in children
-          ]),
-          tff.FederatedType(
-              keys_type_signature, placement, all_equal=True))
-
-
 def _encrypt_tensor(plaintext_type, pk_rcv_type, sk_snd_type):
 
   @computations.tf_computation(plaintext_type, pk_rcv_type, sk_snd_type)
