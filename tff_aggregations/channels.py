@@ -61,9 +61,9 @@ class EasyBoxChannel(Channel):
 
   def __init__(
       self,
-      strategy, 
-      sender: tff.framework.Placement,  
-      receiver: tff.framework.Placement): 
+      strategy,
+      sender: tff.framework.Placement,
+      receiver: tff.framework.Placement):
     self.strategy = strategy
     self.sender_placement = sender
     self.receiver_placement = receiver
@@ -75,20 +75,15 @@ class EasyBoxChannel(Channel):
     self._decrypt_tensor_fn = None
 
   async def setup(self):
-
-    if not self._is_channel_setup:
-      await asyncio.gather(*[
-          self._generate_keys(self.sender_placement),
-          self._generate_keys(self.receiver_placement)
-      ])
-      await asyncio.gather(*[
-          self._share_public_keys(self.sender_placement,
-                                  self.receiver_placement),
-          self._share_public_keys(self.receiver_placement,
-                                  self.sender_placement)
-      ])
-
-      self._is_channel_setup = True
+    await asyncio.gather(*[
+        self._generate_keys(self.sender_placement),
+        self._generate_keys(self.receiver_placement)
+    ])
+    await asyncio.gather(*[
+        self._share_public_key(
+            self.sender_placement, self.receiver_placement),
+        self._share_public_key(
+            self.receiver_placement, self.sender_placement)])
 
   async def send(self, value, sender=None, receiver=None):
     return await self._encrypt_values_on_sender(value, sender, receiver)
@@ -97,6 +92,8 @@ class EasyBoxChannel(Channel):
     return await self._decrypt_values_on_receiver(value, sender, receiver)
 
   async def _generate_keys(self, key_owner):
+    py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
+    executors = self.strategy._get_child_executors(key_owner)
 
     @computations.tf_computation()
     def generate_keys():
@@ -106,27 +103,26 @@ class EasyBoxChannel(Channel):
     fn_type = generate_keys.type_signature
     fn = generate_keys._computation_proto
 
-    executors = self.strategy._get_child_executors(key_owner)
-
-    nb_executors = len(executors)
     sk_vals = []
     pk_vals = []
-
     for executor in executors:
       key_generator = await executor.create_call(await executor.create_value(
           fn, fn_type))
-
       public_key = await executor.create_selection(key_generator, 0)
       secret_key = await executor.create_selection(key_generator, 1)
-
       pk_vals.append(public_key)
       sk_vals.append(secret_key)
 
-    # Store list of EagerValue created by executor.create_call
-    # in a FederatingExecutorValue with the key onwer placement
-    sk_fed_vals = await self._place_keys(sk_vals, key_owner)
-
-    self.key_references.add_keys(key_owner.name, pk_vals, sk_fed_vals)
+    pk_type = pk_vals[0].type_signature
+    sk_type = sk_vals[0].type_signature
+    # all_equal whenever owner is non-CLIENTS singleton placement
+    val_all_equal = len(executors) == 1 and key_owner != tff.CLIENTS
+    pk_fed_val = federating_executor.FederatingExecutorValue(
+        pk_vals, tff.FederatedType(pk_type, key_owner, val_all_equal))
+    sk_fed_val = federating_executor.FederatingExecutorValue(
+        sk_vals, tff.FederatedType(sk_type, key_owner, val_all_equal))
+    self.key_references.update_keys(
+        key_owner, public_key=pk_fed_val, secret_key=sk_fed_val)
 
   async def _share_public_keys(self, key_owner, send_pks_to):
     public_key = self.key_references.get_public_key(key_owner.name)
