@@ -47,6 +47,28 @@ class ChannelGridTest(channels_test_utils.AsyncTestCase):
     assert isinstance(channel, channels.PlaintextChannel)
 
 
+class PlaintextChannelTest(channels_test_utils.AsyncTestCase):
+  def test_send_receive(self):
+    fed_ex = create_test_executor(channel=channels.PlaintextChannel)
+    strategy = fed_ex.intrinsic_strategy
+    channel_grid = strategy.channel_grid
+    self.run_sync(channel_grid.setup_channels(strategy))
+
+    channel = channel_grid[(placement_literals.CLIENTS,
+                            placement_literals.SERVER)]
+    val = self.run_sync(fed_ex.create_value([2.0] * 3,
+        tff.FederatedType(tf.float32, tff.CLIENTS)))
+    sent = self.run_sync(channel.send(val))
+    received = self.run_sync(channel.receive(sent))
+    result = self.run_sync(received.compute())
+
+    assert isinstance(sent, federating_executor.FederatingExecutorValue)
+    self.assertEqual(received.type_signature, tff.FederatedType(tf.float32, tff.CLIENTS))
+    assert isinstance(received, federating_executor.FederatingExecutorValue)
+    self.assertEqual(received.type_signature, tff.FederatedType(tf.float32, tff.SERVER))
+    self.assertEqual(result, tf.constant([2.0] * 3, dtype=tf.float32))
+
+
 class EasyBoxChannelTest(channels_test_utils.AsyncTestCase):
   def test_generate_aggregator_keys(self):
     fed_ex = create_test_executor()

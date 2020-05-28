@@ -41,9 +41,9 @@ class PlaintextChannel(Channel):
       strategy,
       sender: tff.framework.Placement,
       receiver: tff.framework.Placement):
-    del sender
     self.strategy = strategy
-    self.receiver = receiver
+    self.sender_placement = sender
+    self.receiver_placement = receiver
 
   async def setup(self, placements): pass
 
@@ -51,10 +51,11 @@ class PlaintextChannel(Channel):
     return value
 
   async def receive(self, value):
-    if self.sender == tff.SERVER and self.receiver == tff.CLIENTS:
+    if (self.sender_placement == tff.SERVER
+        and self.receiver_placement == tff.CLIENTS):
       ex = self.strategy.executor
       return await ex._compute_intrinsic_federated_broadcast(value)
-    return await self.strategy._place(value, self.receiver)
+    return await self.strategy._place(value, self.receiver_placement)
 
 
 class EasyBoxChannel(Channel):
