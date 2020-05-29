@@ -1,4 +1,5 @@
 import abc
+import collections
 from dataclasses import dataclass
 from typing import Tuple, Dict
 
@@ -8,12 +9,14 @@ import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computations
-from tensorflow_federated.python.core.impl.compiler import placement_literals
 from tensorflow_federated.python.core.impl.executors import federating_executor
+from tensorflow_federated.python.core.impl.types import placement_literals
 
 from tf_encrypted.primitives.sodium import easy_box
 
-PlacementPair = Tuple[placement_literals.PlacementLiteral, placement_literals.PlacementLiteral]
+PlacementPair = Tuple[
+    placement_literals.PlacementLiteral,
+    placement_literals.PlacementLiteral]
 
 
 class Channel(metaclass=abc.ABCMeta):
@@ -30,59 +33,58 @@ class Channel(metaclass=abc.ABCMeta):
   async def setup(self):
     pass
 
-# NOTE to delete once the rest of the code base
-# doesn't need it for prototyping
-class StubChannel(Channel):
-  def setup(self, placements): pass
-  def _keygen(self): pass
-  def _keyexchange(self): pass
-
-  async def send(self, value):
-    return value
-
-  async def receive(self, value):
-    return value
-
-
 class PlaintextChannel(Channel):
-  def setup(self, placements): pass
+  requires_setup: bool = False
+
+  def __init__(
+      self,
+      strategy,
+      sender: tff.framework.Placement,
+      receiver: tff.framework.Placement):
+    self.strategy = strategy
+    self.sender_placement = sender
+    self.receiver_placement = receiver
+
+  async def setup(self, placements): pass
 
   async def send(self, value):
     return value
 
   async def receive(self, value):
-    return value
+    if (self.sender_placement == tff.SERVER
+        and self.receiver_placement == tff.CLIENTS):
+      ex = self.strategy.executor
+      return await ex._compute_intrinsic_federated_broadcast(value)
+    return await self.strategy._place(value, self.receiver_placement)
 
 
 class EasyBoxChannel(Channel):
 
-  def __init__(self, strategy, sender_placement, receiver_placement):
-
+  def __init__(
+      self,
+      strategy,
+      sender: tff.framework.Placement,
+      receiver: tff.framework.Placement):
     self.strategy = strategy
-    self.sender_placement = sender_placement
-    self.receiver_placement = receiver_placement
+    self.sender_placement = sender
+    self.receiver_placement = receiver
 
     self.key_references = KeyStore()
-    self._is_channel_setup = False
+    self.requires_setup = True
 
     self._encrypt_tensor_fn = None
     self._decrypt_tensor_fn = None
 
   async def setup(self):
-
-    if not self._is_channel_setup:
-      await asyncio.gather(*[
-          self._generate_keys(self.sender_placement),
-          self._generate_keys(self.receiver_placement)
-      ])
-      await asyncio.gather(*[
-          self._share_public_keys(self.sender_placement,
-                                  self.receiver_placement),
-          self._share_public_keys(self.receiver_placement,
-                                  self.sender_placement)
-      ])
-
-      self._is_channel_setup = True
+    await asyncio.gather(*[
+        self._generate_keys(self.sender_placement),
+        self._generate_keys(self.receiver_placement)
+    ])
+    await asyncio.gather(*[
+        self._share_public_key(
+            self.sender_placement, self.receiver_placement),
+        self._share_public_key(
+            self.receiver_placement, self.sender_placement)])
 
   async def send(self, value, sender=None, receiver=None):
     return await self._encrypt_values_on_sender(value, sender, receiver)
@@ -91,6 +93,8 @@ class EasyBoxChannel(Channel):
     return await self._decrypt_values_on_receiver(value, sender, receiver)
 
   async def _generate_keys(self, key_owner):
+    py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
+    executors = self.strategy._get_child_executors(key_owner)
 
     @computations.tf_computation()
     def generate_keys():
@@ -100,32 +104,51 @@ class EasyBoxChannel(Channel):
     fn_type = generate_keys.type_signature
     fn = generate_keys._computation_proto
 
-    executors = self.strategy._get_child_executors(key_owner)
-
-    nb_executors = len(executors)
     sk_vals = []
     pk_vals = []
-
     for executor in executors:
       key_generator = await executor.create_call(await executor.create_value(
           fn, fn_type))
-
       public_key = await executor.create_selection(key_generator, 0)
       secret_key = await executor.create_selection(key_generator, 1)
-
       pk_vals.append(public_key)
       sk_vals.append(secret_key)
 
-    # Store list of EagerValue created by executor.create_call
-    # in a FederatingExecutorValue with the key onwer placement
-    sk_fed_vals = await self._place_keys(sk_vals, key_owner)
+    pk_type = pk_vals[0].type_signature
+    sk_type = sk_vals[0].type_signature
+    # all_equal whenever owner is non-CLIENTS singleton placement
+    val_all_equal = len(executors) == 1 and key_owner != tff.CLIENTS
+    pk_fed_val = federating_executor.FederatingExecutorValue(
+        pk_vals, tff.FederatedType(pk_type, key_owner, val_all_equal))
+    sk_fed_val = federating_executor.FederatingExecutorValue(
+        sk_vals, tff.FederatedType(sk_type, key_owner, val_all_equal))
+    self.key_references.update_keys(
+        key_owner, public_key=pk_fed_val, secret_key=sk_fed_val)
 
-    self.key_references.add_keys(key_owner.name, pk_vals, sk_fed_vals)
+  async def _share_public_key(self, key_owner, key_receiver):
+    public_key = self.key_references.get_public_key(key_owner)
+    children = self.strategy._get_child_executors(key_receiver)
+    val = await public_key.compute()
+    key_type = public_key.type_signature.member
+    fed_key_type = tff.FederatedType(key_type, key_receiver, all_equal=True)
 
-  async def _share_public_keys(self, key_owner, send_pks_to):
-    public_key = self.key_references.get_public_key(key_owner.name)
-    pk_fed_vals = await self._place_keys(public_key, send_pks_to)
-    self.key_references.update_keys(key_owner.name, pk_fed_vals)
+    # we currently only support sharing n keys with 1 executor, 
+    # or sharing 1 key with n executors
+    if isinstance(val, list):
+      # sharing n keys with 1 executor
+      py_typecheck.check_len(children, 1)
+      executor = children[0]
+      vals = [executor.create_value(v, key_type) for v in val]
+      vals_type = tff.NamedTupleType(
+          [(None, fed_key_type) for _ in range(len(val))])
+    else:
+      # sharing 1 key with n executors
+      # val is a single tensor
+      vals = [c.create_value(val, key_type) for c in children]
+      vals_type = fed_key_type
+    public_key_rcv = federating_executor.FederatingExecutorValue(
+        await asyncio.gather(*vals), vals_type)
+    self.key_references.update_keys(key_owner, public_key=public_key_rcv)
 
   async def _encrypt_values_on_sender(self, val, sender=None, receiver=None):
 
@@ -168,9 +191,7 @@ class EasyBoxChannel(Channel):
         pk_index=receiver,
         sk_index=sender)
 
-    strat = self.strategy
-
-    val_encrypted = await strat.federated_map(
+    val_encrypted = await self.strategy.federated_map(
         federating_executor.FederatingExecutorValue(
             anonymous_tuple.AnonymousTuple([(None, fn),
                                             (None, val_key_zipped)]),
@@ -260,49 +281,6 @@ class EasyBoxChannel(Channel):
 
     return vals_key_zipped.internal_representation
 
-  async def _place_keys(self, keys, placement):
-
-    py_typecheck.check_type(placement, placement_literals.PlacementLiteral)
-    children = self.strategy._get_child_executors(placement)
-
-    # Scenario: there are as many keys as exectutors. For example
-    # there are 3 clients and each should have a secret key
-    if len(keys) == len(children):
-      keys_type_signature = keys[0].type_signature
-      return federating_executor.FederatingExecutorValue(
-          await asyncio.gather(*[
-              c.create_value(await keys[i].compute(), keys_type_signature)
-              for (i, c) in enumerate(children)
-          ]),
-          tff.FederatedType(
-              keys_type_signature, placement, all_equal=False))
-    # Scenario: there are more keys than exectutors. For example
-    # there are 3 clients and each have a public key. Each client wants
-    # to share its key to the same aggregator.
-    elif (len(children) == 1) & (len(children) < len(keys)):
-      keys_type_signature = keys[0].type_signature
-      child = children[0]
-      return federating_executor.FederatingExecutorValue(
-          await asyncio.gather(*[
-              child.create_value(await k.compute(), keys_type_signature)
-              for k in keys
-          ]),
-          tff.FederatedType(
-              tff.SequenceType(keys_type_signature), placement, all_equal=False))
-    # Scenario: there are more exectutors than keys. For example
-    # there is an aggregator with one public key. The aggregator
-    # wants to share the samer public key to 3 different clients.
-    elif (len(keys) == 1) & (len(children) > len(keys)):
-      keys_type_signature = keys[0].type_signature
-      return federating_executor.FederatingExecutorValue(
-          await asyncio.gather(*[
-              c.create_value(await keys[0].compute(), keys_type_signature)
-              for c in children
-          ]),
-          tff.FederatedType(
-              keys_type_signature, placement, all_equal=True))
-
-
 def _encrypt_tensor(plaintext_type, pk_rcv_type, sk_snd_type):
 
   @computations.tf_computation(plaintext_type, pk_rcv_type, sk_snd_type)
@@ -341,37 +319,57 @@ def _decrypt_tensor(sender_values_type, pk_snd_type, sk_rcv_snd,
 
 @dataclass
 class ChannelGrid:
-  channel_dict: Dict[PlacementPair, Channel]
+  _channel_dict: Dict[PlacementPair, Channel]
   requires_setup: bool = True
 
-  def setup_channels(self, strategy):
-    for placement_pair in self.channel_dict:
-      channel_cls = self.channel_dict[placement_pair]
-      self.channel_dict[placement_pair] = channel_cls(strategy, *placement_pair)
-    self.requires_setup = False
+  async def setup_channels(self, strategy):
+    if self.requires_setup:
+      for placement_pair in self._channel_dict:
+        channel_cls = self._channel_dict[placement_pair]
+        channel = channel_cls(strategy, *placement_pair)
+        if channel.requires_setup:
+          await channel.setup()
+          channel.requires_setup = False
+        self._channel_dict[placement_pair] = channel
+      self.requires_setup = False
 
   def __getitem__(self, placements: PlacementPair):
     py_typecheck.check_type(placements, tuple)
     py_typecheck.check_len(placements, 2)
     sorted_placements = sorted(placements, key=lambda p: p.uri)
-    return self.channel_dict.get(tuple(sorted_placements))
+    return self._channel_dict.get(tuple(sorted_placements))
 
 
 class KeyStore:
-  def __init__(self):
-    self.key_store = {}
+  _default_store = lambda k: {'pk': None, 'sk': None}
 
-  def add_keys(self, key_owner, public_key, secret_key):
-    self.key_store[key_owner] = {'pk': public_key, 'sk': secret_key}
+  def __init__(self):
+    self._key_store = collections.defaultdict(self._default_store)
+
+  def get_key_pair(self, key_owner):
+    key_owner_cache = self._get_keys(key_owner)
+    return key_owner_cache['pk'], key_owner_cache['sk']
 
   def get_public_key(self, key_owner):
-    return self.key_store[key_owner]['pk']
+    return self._get_keys(key_owner)['pk']
 
   def get_secret_key(self, key_owner):
-    return self.key_store[key_owner]['sk']
+    return self._get_keys(key_owner)['sk']
+
+  def _get_keys(self, key_owner):
+    py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
+    return self._key_store[key_owner.name]
 
   def update_keys(self, key_owner, public_key=None, secret_key=None):
-    if public_key:
-      self.key_store[key_owner]['pk'] = public_key
-    if secret_key:
-      self.key_store[key_owner]['sk'] = secret_key
+    key_owner_cache = self._get_keys(key_owner)
+    if public_key is not None:
+      self._check_key_type(public_key)
+      key_owner_cache['pk'] = public_key
+    if secret_key is not None:
+      self._check_key_type(secret_key)
+      key_owner_cache['sk'] = secret_key
+
+  def _check_key_type(self, key):
+    py_typecheck.check_type(key, federating_executor.FederatingExecutorValue)
+    py_typecheck.check_type(key.type_signature,
+        (tff.NamedTupleType, tff.FederatedType))

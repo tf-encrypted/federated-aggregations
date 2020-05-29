@@ -6,11 +6,12 @@ import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computation_types
-from tensorflow_federated.python.core.impl.compiler import placement_literals
 from tensorflow_federated.python.core.impl.executors import federating_executor
+from tensorflow_federated.python.core.impl.types import placement_literals
 from tf_encrypted.primitives import paillier
 
 from tff_aggregations import channels
+from tff_aggregations import utils
 from tff_aggregations.paillier import placement as paillier_placement
 
 
@@ -68,15 +69,6 @@ def _paillier_sequence_sum():
   return _sequence_sum
 
 
-def _lift_to_computation_spec(tf_func, input_arg_type=None):
-  if not hasattr(tf_func, '_computation_proto'):
-    if input_arg_type is None:
-      raise ValueError('Polymorphic tf_computation requires arg_type to '
-                       'become concrete.')
-    tf_func = tf_func.fn_for_argument_type(input_arg_type)
-  return tf_func._computation_proto, tf_func.type_signature
-
-
 def _check_key_inputter(fn_value):
   fn_type = fn_value.type_signature
   py_typecheck.check_type(fn_type, tff.FunctionType)
@@ -131,8 +123,11 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
                       pl, pl_cardinality))
   
   async def _move(self, value, source_placement, target_placement):
-    del source_placement
-    return await self._place(value, target_placement)
+    if self.channel_grid.requires_setup:
+      await self.channel_grid.setup_channels(self)
+    channel = self.channel_grid[(source_placement, target_placement)]
+    sent = await channel.send(value)
+    return await channel.receive(sent)
 
   async def _paillier_setup(self):
     # Load paillier keys on server
@@ -185,7 +180,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         zip_arg)
 
     # Map encryptor onto encryption key & client values
-    encryptor_proto, encryptor_type = _lift_to_computation_spec(
+    encryptor_proto, encryptor_type = utils._lift_to_computation_spec(
         self._paillier_encryptor,
         input_arg_type=tff.NamedTupleType((
             client_keys_type.member, client_values_type.member)))
@@ -198,4 +193,12 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         map_arg)
 
     # TODO compute _paillier_sequence_sum on encrypted_values
+    encrypted_values = await self._move(encrypted_values,
+        tff.CLIENTS, paillier_placement.PAILLIER)
+    sum_proto, sum_type = _lift_to_computation_spec(
+        self._paillier_sequence_sum,
+        input_arg_type=tff.NamedTupleType((
+            self.encryption_key_paillier.type_signature.member,
+            encrypted_values.type_signature.member)))
+
     # TODO perform _paillier_decrypt on sum result

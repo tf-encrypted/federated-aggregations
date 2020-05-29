@@ -3,8 +3,8 @@ import functools
 import tensorflow as tf
 import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import py_typecheck
-from tensorflow_federated.python.core.impl.compiler import placement_literals
 from tensorflow_federated.python.core.impl.executors import executor_stacks
+from tensorflow_federated.python.core.impl.types import placement_literals
 
 from tff_aggregations import channels
 from tff_aggregations.paillier import placement as paillier_placement
@@ -34,11 +34,11 @@ def local_paillier_executor_factory(
   # TODO consider parameterizing this function with channel_grid
   channel_grid = channels.ChannelGrid({
       (tff.CLIENTS,
-       paillier_placement.PAILLIER): channels.StubChannel(),
+       paillier_placement.PAILLIER): channels.EasyBoxChannel,
       (tff.CLIENTS, 
-       tff.SERVER): channels.StubChannel(),
+       tff.SERVER): channels.PlaintextChannel,
       (paillier_placement.PAILLIER, 
-       tff.SERVER): channels.StubChannel()})
+       tff.SERVER): channels.PlaintextChannel})
 
   def intrinsic_strategy_fn(executor):
     return paillier_strategy.PaillierStrategy(executor, channel_grid,
