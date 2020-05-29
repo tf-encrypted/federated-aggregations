@@ -6,9 +6,9 @@ from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.impl.executors import executor_stacks
 from tensorflow_federated.python.core.impl.types import placement_literals
 
-from tff_aggregations import channels
-from tff_aggregations.paillier import placement as paillier_placement
-from tff_aggregations.paillier import strategy as paillier_strategy
+from federated_aggregations import channels
+from federated_aggregations.paillier import placement as paillier_placement
+from federated_aggregations.paillier import strategy as paillier_strategy
 
 
 # separation of setup & sending -- setup phase only needs to happen once

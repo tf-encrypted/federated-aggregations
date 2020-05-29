@@ -10,9 +10,9 @@ import tensorflow_federated as tff
 from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
 
-from tff_aggregations.channels import channel as ch
-from tff_aggregations.channels import channel_grid as grid
-from tff_aggregations.channels import channel_test_utils as utils
+from federated_aggregations.channels import channel as ch
+from federated_aggregations.channels import channel_grid as grid
+from federated_aggregations.channels import channel_test_utils as utils
 
 
 class PlaintextChannelTest(utils.AsyncTestCase):

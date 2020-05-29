@@ -21,8 +21,8 @@ import asyncio
 import tensorflow_federated as tff
 from tensorflow_federated.python.core.impl.executors import federating_executor
 
-from tff_aggregations.channels import channel_grid as grid
-from tff_aggregations.channels import channel as ch
+from federated_aggregations.channels import channel_grid as grid
+from federated_aggregations.channels import channel as ch
 
 
 def create_bottom_stack():

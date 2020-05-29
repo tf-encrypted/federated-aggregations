@@ -10,9 +10,9 @@ from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
 from tf_encrypted.primitives import paillier
 
-from tff_aggregations import utils
-from tff_aggregations.channels import channel
-from tff_aggregations.paillier import placement as paillier_placement
+from federated_aggregations import utils
+from federated_aggregations.channels import channel
+from federated_aggregations.paillier import placement as paillier_placement
 
 
 def paillier_keygen(bitlength=2048):

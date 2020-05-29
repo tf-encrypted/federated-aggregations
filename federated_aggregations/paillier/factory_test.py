@@ -8,7 +8,7 @@ import tensorflow_federated as tff
 from tensorflow_federated.python.core.impl.executors import execution_context
 from tensorflow_federated.python.core.impl.executors import executor_factory
 
-from tff_aggregations.paillier import factory
+from federated_aggregations.paillier import factory
 
 def _temperature_sensor_example_next_fn():
 

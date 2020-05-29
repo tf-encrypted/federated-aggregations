@@ -13,13 +13,13 @@ REQUIRED_PACKAGES = [
     'tf-encrypted-primitives~=0.0.1',
 ]
 
-with open('tff_aggregations/version.py') as fp:
+with open('federated_aggregations/version.py') as fp:
   globals_dict = {}
   exec(fp.read(), globals_dict)  # pylint: disable=exec-used
   VERSION = globals_dict['__version__']
 
 setuptools.setup(
-    name='tff_aggregations',
+    name='federated_aggregations',
     version=VERSION,
     packages=setuptools.find_packages(exclude=('examples')),
     description=DOCLINES[0],
@@ -27,8 +27,8 @@ setuptools.setup(
     long_description_content_type='text/markdown',
     author='The TF Encrypted Authors',
     author_email='contact@tf-encrypted.io',
-    url='https://github.com/tf-encrypted/tff-aggregations',
-    download_url='https://github.com/tf-encrypted/tff-aggregations/tags',
+    url='https://github.com/tf-encrypted/federated-aggregations',
+    download_url='https://github.com/tf-encrypted/federated-aggregations/tags',
     install_requires=REQUIRED_PACKAGES,
     # PyPI package information.
     classifiers=[

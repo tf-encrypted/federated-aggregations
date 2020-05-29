@@ -5,6 +5,7 @@ from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
 
+
 class KeyStore:
   _default_store = lambda k: {'pk': None, 'sk': None}
 
