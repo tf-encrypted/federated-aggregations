@@ -4,8 +4,8 @@ from typing import Dict, Tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.impl.types import placement_literals
 
-from tff_aggregations.channels import channel
-from tff_aggregations import utils
+from federated_aggregations.channels import channel
+from federated_aggregations import utils
 
 @dataclass
 class ChannelGrid:

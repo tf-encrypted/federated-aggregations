@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_federated as tff
 
-from tff_aggregations import paillier
+from federated_aggregations import paillier
 
 NUM_CLIENTS = 5
 

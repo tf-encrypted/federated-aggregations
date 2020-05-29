@@ -1,8 +1,8 @@
 import tensorflow_federated as tff
 
-from tff_aggregations.channels import channel as ch
-from tff_aggregations.channels import channel_grid as grid
-from tff_aggregations.channels import channel_test_utils as utils
+from federated_aggregations.channels import channel as ch
+from federated_aggregations.channels import channel_grid as grid
+from federated_aggregations.channels import channel_test_utils as utils
 
 class ChannelGridTest(utils.AsyncTestCase):
   def test_channel_grid_setup(self):
