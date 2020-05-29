@@ -1,3 +1,9 @@
+from tensorflow_federated.python.core.impl.types import placement_literals
+
+PlacementPair = Tuple[
+    placement_literals.PlacementLiteral,
+    placement_literals.PlacementLiteral]
+
 def lift_to_computation_spec(tf_func, input_arg_type=None):
   """Determine computation definition & type spec from a tf_computation.
   

@@ -1,6 +1,5 @@
 import abc
 import asyncio
-import collections
 
 import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
@@ -8,9 +7,10 @@ from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computations
 from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
-
 from tf_encrypted.primitives.sodium import easy_box
 
+from tff_aggregations import utils
+from tff_aggregations.channels import key_store
 
 class Channel(metaclass=abc.ABCMeta):
 
@@ -62,7 +62,7 @@ class EasyBoxChannel(Channel):
     self.sender_placement = sender
     self.receiver_placement = receiver
 
-    self.key_references = KeyStore()
+    self.key_references = key_store.KeyStore()
     self.requires_setup = True
 
     self._encrypt_tensor_fn = None
@@ -308,38 +308,3 @@ def _decrypt_tensor(sender_values_type, pk_snd_type, sk_rcv_snd,
     return plaintext_recovered
 
   return decrypt_tensor
-
-
-class KeyStore:
-  _default_store = lambda k: {'pk': None, 'sk': None}
-
-  def __init__(self):
-    self._key_store = collections.defaultdict(self._default_store)
-
-  def get_key_pair(self, key_owner):
-    key_owner_cache = self._get_keys(key_owner)
-    return key_owner_cache['pk'], key_owner_cache['sk']
-
-  def get_public_key(self, key_owner):
-    return self._get_keys(key_owner)['pk']
-
-  def get_secret_key(self, key_owner):
-    return self._get_keys(key_owner)['sk']
-
-  def _get_keys(self, key_owner):
-    py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
-    return self._key_store[key_owner.name]
-
-  def update_keys(self, key_owner, public_key=None, secret_key=None):
-    key_owner_cache = self._get_keys(key_owner)
-    if public_key is not None:
-      self._check_key_type(public_key)
-      key_owner_cache['pk'] = public_key
-    if secret_key is not None:
-      self._check_key_type(secret_key)
-      key_owner_cache['sk'] = secret_key
-
-  def _check_key_type(self, key):
-    py_typecheck.check_type(key, federating_executor.FederatingExecutorValue)
-    py_typecheck.check_type(key.type_signature,
-        (tff.NamedTupleType, tff.FederatedType))
