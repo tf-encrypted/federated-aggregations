@@ -1,3 +1,5 @@
+from typing import Tuple
+
 from tensorflow_federated.python.core.impl.types import placement_literals
 
 PlacementPair = Tuple[

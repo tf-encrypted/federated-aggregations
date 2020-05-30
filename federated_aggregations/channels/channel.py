@@ -7,13 +7,14 @@ from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computations
 from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
+from tensorflow_federated.python.core.impl.types import type_analysis
+from tensorflow_federated.python.core.impl.types import type_conversions
 from tf_encrypted.primitives.sodium import easy_box
 
 from federated_aggregations import utils
 from federated_aggregations.channels import key_store
 
 class Channel(metaclass=abc.ABCMeta):
-
   @abc.abstractmethod
   async def send(self, value, sender=None, receiver=None):
     pass
@@ -32,27 +33,46 @@ class PlaintextChannel(Channel):
   def __init__(
       self,
       strategy,
-      sender: tff.framework.Placement,
-      receiver: tff.framework.Placement):
+      *placements: utils.PlacementPair):
     self.strategy = strategy
-    self.sender_placement = sender
-    self.receiver_placement = receiver
+    self.placements = placements
 
-  async def setup(self, placements): pass
+  async def setup(self, strategy):
+    pass
 
-  async def send(self, value):
-    return value
+  async def send(self, arg):
+    self._check_value_for_send(arg)
+    return arg
 
-  async def receive(self, value):
-    if (self.sender_placement == tff.SERVER
-        and self.receiver_placement == tff.CLIENTS):
-      ex = self.strategy.executor
-      return await ex._compute_intrinsic_federated_broadcast(value)
-    return await self.strategy._place(value, self.receiver_placement)
+  async def receive(self, arg):
+    sender_placement = arg.type_signature.placement
+    receiver_placement = self._get_other_placement(sender_placement)
+    rcv_children = self.strategy._get_child_executors(receiver_placement)
+    val = await arg.compute()
+    val_type = type_conversions.infer_type(val)
+    return federating_executor.FederatingExecutorValue(
+        await asyncio.gather(
+            *[c.create_value(val, val_type) for c in rcv_children]),
+        tff.FederatedType(val_type, receiver_placement, all_equal=True))
+
+  def _get_other_placement(self, this_placement):
+    for placement in self.placements:
+      if placement != this_placement:
+        return placement
+        
+  def _check_value_for_send(self, arg):
+    py_typecheck.check_type(arg, federating_executor.FederatingExecutorValue)
+    py_typecheck.check_type(arg.type_signature, (tff.FederatedType, tff.NamedTupleType))
+    value_type = arg.type_signature
+    sender_placement = arg.type_signature.placement
+    if sender_placement not in self.placements:
+      raise ValueError(
+          'Tried to send a value with placement {} through channel for '
+          'placements ({},{}).'.format(
+              str(sender_placement), *(str(p) for p in self.placements)))
 
 
 class EasyBoxChannel(Channel):
-
   def __init__(
       self,
       strategy,
@@ -61,10 +81,8 @@ class EasyBoxChannel(Channel):
     self.strategy = strategy
     self.sender_placement = sender
     self.receiver_placement = receiver
-
     self.key_references = key_store.KeyStore()
     self.requires_setup = True
-
     self._encrypt_tensor_fn = None
     self._decrypt_tensor_fn = None
 
@@ -88,7 +106,6 @@ class EasyBoxChannel(Channel):
   async def _generate_keys(self, key_owner):
     py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
     executors = self.strategy._get_child_executors(key_owner)
-
     @computations.tf_computation()
     def generate_keys():
       pk, sk = easy_box.gen_keypair()
@@ -96,7 +113,6 @@ class EasyBoxChannel(Channel):
 
     fn_type = generate_keys.type_signature
     fn = generate_keys._computation_proto
-
     sk_vals = []
     pk_vals = []
     for executor in executors:
@@ -106,7 +122,6 @@ class EasyBoxChannel(Channel):
       secret_key = await executor.create_selection(key_generator, 1)
       pk_vals.append(public_key)
       sk_vals.append(secret_key)
-
     pk_type = pk_vals[0].type_signature
     sk_type = sk_vals[0].type_signature
     # all_equal whenever owner is non-CLIENTS singleton placement
@@ -124,8 +139,7 @@ class EasyBoxChannel(Channel):
     val = await public_key.compute()
     key_type = public_key.type_signature.member
     fed_key_type = tff.FederatedType(key_type, key_receiver, all_equal=True)
-
-    # we currently only support sharing n keys with 1 executor, 
+    # we currently only support sharing n keys with 1 executor,
     # or sharing 1 key with n executors
     if isinstance(val, list):
       # sharing n keys with 1 executor
