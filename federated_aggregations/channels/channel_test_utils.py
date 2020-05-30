@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Utils for testing channels."""
-
-from absl.testing import absltest
 from absl.testing import parameterized
 import asyncio
 
@@ -47,7 +45,7 @@ def create_test_executor(
       intrinsic_strategy_fn=intrinsic_strategy_fn)
 
 
-class AsyncTestCase(absltest.TestCase):
+class AsyncTestCase(parameterized.TestCase):
   """A test case that manages a new event loop for each test.
 
   Each test will have a new event loop instead of using the current event loop.
