@@ -66,6 +66,7 @@ class EasyBoxChannel(Channel):
     self.placements = placements
     self.key_references = key_store.KeyStore()
     self._requires_setup = True
+    self._key_generator = None  # lazy key generation
 
   async def setup(self):
     if self._requires_setup:
@@ -78,8 +79,13 @@ class EasyBoxChannel(Channel):
           self._share_public_key(p1, p0)])
       self._requires_setup = False
 
-  async def send(self, value, sender=None, receiver=None):
-    return await self._encrypt_values_on_sender(value, sender, receiver)
+  async def send(self, value):
+    _check_value_for_send(value, self.placements)
+    sender_placement = value.type_signature.placement
+    receiver_placement = _get_other_placement(
+        sender_placement, self.placements)
+    return await self._encrypt_values_on_sender(
+        value, sender_placement, receiver_placement)
 
   async def receive(self, value, receiver=None, sender=None):
     return await self._decrypt_values_on_receiver(value, sender, receiver)
@@ -87,13 +93,9 @@ class EasyBoxChannel(Channel):
   async def _generate_keys(self, key_owner):
     py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
     executors = self.strategy._get_child_executors(key_owner)
-    @computations.tf_computation()
-    def generate_keys():
-      pk, sk = easy_box.gen_keypair()
-      return pk.raw, sk.raw
-
-    fn_type = generate_keys.type_signature
-    fn = generate_keys._computation_proto
+    if self._key_generator is None:
+      self._key_generator = _generate_keys()
+    fn, fn_type = utils.lift_to_computation_spec(self._key_generator)
     sk_vals = []
     pk_vals = []
     for executor in executors:
@@ -294,6 +296,15 @@ def _decrypt_tensor(sender_values_type, pk_snd_type, sk_rcv_snd,
     return plaintext_recovered
 
   return decrypt_tensor
+
+
+def _generate_keys():
+  @computations.tf_computation()
+  def key_generator():
+    pk, sk = easy_box.gen_keypair()
+    return pk.raw, sk.raw
+
+  return key_generator
 
 
 def _get_other_placement(this_placement, both_placements):
