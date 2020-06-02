@@ -67,6 +67,8 @@ class EasyBoxChannel(Channel):
     self.key_references = key_store.KeyStore()
     self._requires_setup = True
     self._key_generator = None  # lazy key generation
+    self._encryptor_cache = {}
+    self._decryptor_cache = {}
 
   async def setup(self):
     if self._requires_setup:
@@ -138,57 +140,94 @@ class EasyBoxChannel(Channel):
         await asyncio.gather(*vals), vals_type)
     self.key_references.update_keys(key_owner, public_key=public_key_rcv)
 
-  async def _encrypt_values_on_sender(self, val, sender=None, receiver=None):
-
-    nb_senders = len(
-        self.strategy._get_child_executors(self.sender_placement))
-
-    if nb_senders == 1:
-      input_tensor_type = val.type_signature
-      self.orig_sender_tensor_dtype = input_tensor_type.dtype
-    else:
-      input_tensor_type = val[0].type_signature
-      self.orig_sender_tensor_dtype = input_tensor_type.dtype
-
-    pk_receiver = self.key_references.get_public_key(
-        self.receiver_placement.name)
-    sk_sender = self.key_references.get_secret_key(self.sender_placement.name)
+  async def _encrypt_values_on_sender(self, val, sender, receiver):
+    # Check proper key placement
+    pk_receiver = self.key_references.get_public_key(receiver)
+    sk_sender = self.key_references.get_secret_key(sender)
+    assert pk_receiver.type_signature.placement is sender
+    assert sk_sender.type_signature.placement is sender
+    # Materialize encryptor function definition & type spec
+    input_type = val.type_signature.member
+    self._input_type_cache = input_type
     pk_rcv_type = pk_receiver.type_signature.member
     sk_snd_type = sk_sender.type_signature.member
-
-    if not self._encrypt_tensor_fn:
-      self._encrypt_tensor_fn = _encrypt_tensor(input_tensor_type,
-                                                     pk_rcv_type, sk_snd_type)
-
-    fn_type = self._encrypt_tensor_fn.type_signature
-    fn = self._encrypt_tensor_fn._computation_proto
-
-    if nb_senders == 1:
-      tensor_type = val.type_signature
+    if isinstance(pk_rcv_type, tff.NamedTupleType):
+      pk_element_type = pk_rcv_type[0]
     else:
-      tensor_type = val[0].type_signature
-
-    val_type = tff.FederatedType(
-        tensor_type, self.sender_placement, all_equal=False)
-
-    val_key_zipped = await self._zip_val_key(
-        self.sender_placement,
-        val,
-        pk_receiver,
-        sk_sender,
-        pk_index=receiver,
-        sk_index=sender)
-
-    val_encrypted = await self.strategy.federated_map(
-        federating_executor.FederatingExecutorValue(
-            anonymous_tuple.AnonymousTuple([(None, fn),
-                                            (None, val_key_zipped)]),
-            tff.NamedTupleType((fn_type, val_type))))
-
-    if sender != None or receiver != None:
-      return val_encrypted.internal_representation[0]
-    else:
-      return val_encrypted.internal_representation
+      pk_element_type = pk_rcv_type
+    encryptor_arg_spec = (input_type, pk_element_type, sk_snd_type)
+    hashable_arg_spec = tuple(
+        x.compact_representation() for x in encryptor_arg_spec)
+    encryptor = self._encryptor_cache.get(hashable_arg_spec)
+    if encryptor is None:
+      encryptor = _encrypt_tensor(*encryptor_arg_spec)
+      self._encryptor_cache[hashable_arg_spec] = encryptor
+    encryptor_proto, encryptor_type = utils.lift_to_computation_spec(
+        encryptor, input_arg_type=tff.NamedTupleType(encryptor_arg_spec))
+    # apply encryption on sender placement
+    if isinstance(pk_rcv_type, tff.NamedTupleType):
+      ###
+      # since CLIENTS is the only placement with cardinality>1,
+      # we can safely assume receiver is CLIENTS and sender has cardinality=1
+      ###
+      # Case 1: receiver=CLIENTS
+      #     plaintext: Fed(Tensor, sender, all_equal=True)
+      #     pk_receiver: Fed(Tuple(Tensor), sender, all_equal=True)
+      #     sk_sender: Fed(Tensor, sender, all_equal=True)
+      #   Returns:
+      #     encrypted_values: Fed(Tuple(Tensor), sender, all_equal=True)
+      rcv_children = self.strategy._get_child_executors(receiver)
+      snd_children = self.strategy._get_child_executors(sender)
+      py_typecheck.check_len(rcv_children, len(pk_rcv_type))
+      py_typecheck.check_len(snd_children, 1)
+      snd_child = snd_children[0]
+      # Check and prepare encryption arguments
+      py_typecheck.check_len(val.internal_representation, 1)
+      py_typecheck.check_len(sk_sender.internal_representation, 1)
+      v = val.internal_representation[0]
+      sk = sk_sender.internal_representation[0]
+      encryptor_fn_value = await snd_child.create_value(
+          encryptor_proto, encryptor_type)
+      # Encrypt values and return them
+      encrypted_values = []
+      encrypted_value_types = []
+      for this_pk in pk_receiver.internal_representation:
+        encryptor_arg = await snd_child.create_tuple([v, this_pk, sk])
+        encrypted_values.append(snd_child.create_call(
+            encryptor_fn_value, encryptor_arg))
+        encrypted_value_types.append(encryptor_type.result)
+      return federating_executor.FederatingExecutorValue(
+          await asyncio.gather(*encrypted_values),
+          tff.FederatedType(tff.NamedTupleType(encrypted_value_types),
+              sender, all_equal=True))
+    # Case 2: sender=CLIENTS
+    #     plaintext: Fed(Tensor, CLIENTS, all_equal=False)
+    #     pk_receiver: Fed(Tensor, CLIENTS, all_equal=True)
+    #     sk_sender: Fed(Tensor, CLIENTS, all_equal=False)
+    #   Returns:
+    #     encrypted_values: Fed(Tensor, CLIENTS, all_equal=False)
+    # Check and prepare encryption arguments
+    snd_children = self.strategy._get_child_executors(sender)
+    rcv_children = self.strategy._get_child_executors(receiver)
+    py_typecheck.check_len(rcv_children, 1)
+    federated_values = [
+        val.internal_representation,
+        pk_receiver.internal_representation,
+        sk_sender.internal_representation]
+    for v in federated_values:
+      py_typecheck.check_len(v, len(snd_children))
+    # Encrypt values and return them
+    encrypted_values = []
+    for v, pk, sk, snd_child in zip(*federated_values, snd_children):
+      encryptor_fn_value = await snd_child.create_value(
+          encryptor_proto, encryptor_type)
+      encryptor_arg = await snd_child.create_tuple([v, pk, sk])
+      encrypted_values.append(
+          snd_child.create_call(encryptor_fn_value, arg=encryptor_arg))
+    return federating_executor.FederatingExecutorValue(
+        await asyncio.gather(*encrypted_values),
+        tff.FederatedType(encryptor_type.result, sender,
+            all_equal=val.type_signature.all_equal))
 
   async def _decrypt_values_on_receiver(self, val, sender=None, receiver=None):
 
@@ -283,7 +322,7 @@ def _encrypt_tensor(plaintext_type, pk_rcv_type, sk_snd_type):
 
 
 def _decrypt_tensor(sender_values_type, pk_snd_type, sk_rcv_snd,
-                    orig_sender_tensor_dtype):
+    orig_sender_tensor_dtype):
   @tff.tf_computation(sender_values_type, pk_snd_type, sk_rcv_snd)
   def decrypt_tensor(sender_values, pk_snd, sk_rcv):
     ciphertext = easy_box.Ciphertext(sender_values[0])
