@@ -17,9 +17,7 @@ class ChannelGrid:
       for placement_pair in self._channel_dict:
         channel_cls = self._channel_dict[placement_pair]
         channel = channel_cls(strategy, *placement_pair)
-        if channel.requires_setup:
-          await channel.setup()
-          channel.requires_setup = False
+        await channel.setup()
         self._channel_dict[placement_pair] = channel
       self.requires_setup = False
 

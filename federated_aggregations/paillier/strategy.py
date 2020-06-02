@@ -123,8 +123,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
                       pl, pl_cardinality))
   
   async def _move(self, value, source_placement, target_placement):
-    if self.channel_grid.requires_setup:
-      await self.channel_grid.setup_channels(self)
+    await self.channel_grid.setup_channels(self)
     channel = self.channel_grid[(source_placement, target_placement)]
     sent = await channel.send(value)
     return await channel.receive(sent)
@@ -180,7 +179,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         zip_arg)
 
     # Map encryptor onto encryption key & client values
-    encryptor_proto, encryptor_type = utils._lift_to_computation_spec(
+    encryptor_proto, encryptor_type = utils.lift_to_computation_spec(
         self._paillier_encryptor,
         input_arg_type=tff.NamedTupleType((
             client_keys_type.member, client_values_type.member)))
@@ -195,7 +194,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     # TODO compute _paillier_sequence_sum on encrypted_values
     encrypted_values = await self._move(encrypted_values,
         tff.CLIENTS, paillier_placement.PAILLIER)
-    sum_proto, sum_type = _lift_to_computation_spec(
+    sum_proto, sum_type = utils.lift_to_computation_spec(
         self._paillier_sequence_sum,
         input_arg_type=tff.NamedTupleType((
             self.encryption_key_paillier.type_signature.member,
