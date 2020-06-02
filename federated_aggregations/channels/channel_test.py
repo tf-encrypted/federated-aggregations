@@ -58,7 +58,7 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
     pk_clients, sk_clients = channel.key_references.get_key_pair(tff.CLIENTS)
     pk_server, sk_server = channel.key_references.get_key_pair(tff.SERVER)
 
-    self.assertEqual(str(pk_clients.type_signature), '<uint8[32]@SERVER,uint8[32]@SERVER,uint8[32]@SERVER>')
+    self.assertEqual(str(pk_clients.type_signature), '<uint8[32],uint8[32],uint8[32]>@SERVER')
     self.assertEqual(str(sk_clients.type_signature), '{uint8[32]}@CLIENTS')
     self.assertEqual(str(pk_server.type_signature), 'uint8[32]@CLIENTS')
     self.assertEqual(str(sk_server.type_signature), 'uint8[32]@SERVER')

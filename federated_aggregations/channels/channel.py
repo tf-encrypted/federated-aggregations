@@ -119,7 +119,6 @@ class EasyBoxChannel(Channel):
     children = self.strategy._get_child_executors(key_receiver)
     val = await public_key.compute()
     key_type = public_key.type_signature.member
-    fed_key_type = tff.FederatedType(key_type, key_receiver, all_equal=True)
     # we currently only support sharing n keys with 1 executor,
     # or sharing 1 key with n executors
     if isinstance(val, list):
@@ -127,13 +126,12 @@ class EasyBoxChannel(Channel):
       py_typecheck.check_len(children, 1)
       executor = children[0]
       vals = [executor.create_value(v, key_type) for v in val]
-      vals_type = tff.NamedTupleType(
-          [(None, fed_key_type) for _ in range(len(val))])
+      vals_type = tff.FederatedType(type_conversions.infer_type(val), key_receiver)
     else:
       # sharing 1 key with n executors
       # val is a single tensor
       vals = [c.create_value(val, key_type) for c in children]
-      vals_type = fed_key_type
+      vals_type = tff.FederatedType(key_type, key_receiver, all_equal=True)
     public_key_rcv = federating_executor.FederatingExecutorValue(
         await asyncio.gather(*vals), vals_type)
     self.key_references.update_keys(key_owner, public_key=public_key_rcv)
