@@ -17,11 +17,15 @@ from federated_aggregations.channels import key_store
 
 class Channel(metaclass=abc.ABCMeta):
   @abc.abstractmethod
-  async def send(self, value, sender=None, receiver=None):
+  async def transfer(self, value):
     pass
 
   @abc.abstractmethod
-  async def receive(self, value, sender=None, receiver=None):
+  async def send(self, value, source, recipient):
+    pass
+
+  @abc.abstractmethod
+  async def receive(self, value, source, recipient):
     pass
 
   @abc.abstractmethod
@@ -29,7 +33,7 @@ class Channel(metaclass=abc.ABCMeta):
     pass
 
 
-class PlaintextChannel(Channel):
+class BaseChannel(Channel):
   def __init__(
       self,
       strategy,
@@ -37,38 +41,54 @@ class PlaintextChannel(Channel):
     self.strategy = strategy
     self.placements = placements
 
-  async def setup(self):
-    pass
-
-  async def send(self, arg):
-    _check_value_for_send(arg, self.placements)
-    return arg
-
-  async def receive(self, arg):
-    sender_placement = arg.type_signature.placement
+  async def transfer(self, value):
+    _check_value_placement(value, self.placements)
+    sender_placement = value.type_signature.placement
     receiver_placement = _get_other_placement(
         sender_placement, self.placements)
+    sent = await self.send(value, sender_placement, receiver_placement)
     rcv_children = self.strategy._get_child_executors(receiver_placement)
-    val = await arg.compute()
-    val_type = type_conversions.infer_type(val)
-    return federating_executor.FederatingExecutorValue(
+    message = await sent.compute()
+    message_type = type_converstions.infer_type(message)
+    message_value = federating_executor.FederatingExecutorValue(
         await asyncio.gather(
-            *[c.create_value(val, val_type) for c in rcv_children]),
-        tff.FederatedType(val_type, receiver_placement, all_equal=True))
+            *[c.create_value(message, message_type) for c in rcv_children]),
+        tff.FederatedType(message_type, receiver_placement, all_equal=True))
+    return self.receive(message_value, sender_placement, receiver_placement)
 
 
-class EasyBoxChannel(Channel):
+class PlaintextChannel(BaseChannel):
+  async def send(self, value, source, recipient):
+    del sender, receiver
+    return value
+
+  async def receive(self, value, source, recipient):
+    del sender, receiver
+    return value
+
+  async def setup(self):
+    pass
+
+
+class EasyBoxChannel(BaseChannel):
   def __init__(
       self,
       strategy,
       *placements: utils.PlacementPair):
-    self.strategy = strategy
-    self.placements = placements
+    super().__init__(strategy, *placements)
     self.key_references = key_store.KeyStore()
     self._requires_setup = True
     self._key_generator = None  # lazy key generation
     self._encryptor_cache = {}
     self._decryptor_cache = {}
+
+  async def send(self, value, sender_placement, receiver_placement):
+    return await self._encrypt_values_on_sender(
+        value, sender_placement, receiver_placement)
+
+  async def receive(self, value, sender_placement, receiver_placement):
+    return await self._decrypt_values_on_receiver(
+        value, sender_placement, receiver_placement)
 
   async def setup(self):
     if self._requires_setup:
@@ -81,71 +101,12 @@ class EasyBoxChannel(Channel):
           self._share_public_key(p1, p0)])
       self._requires_setup = False
 
-  async def send(self, value):
-    _check_value_for_send(value, self.placements)
-    sender_placement = value.type_signature.placement
-    receiver_placement = _get_other_placement(
-        sender_placement, self.placements)
-    return await self._encrypt_values_on_sender(
-        value, sender_placement, receiver_placement)
-
-  async def receive(self, value, receiver=None, sender=None):
-    return await self._decrypt_values_on_receiver(value, sender, receiver)
-
-  async def _generate_keys(self, key_owner):
-    py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
-    executors = self.strategy._get_child_executors(key_owner)
-    if self._key_generator is None:
-      self._key_generator = _generate_keys()
-    fn, fn_type = utils.lift_to_computation_spec(self._key_generator)
-    sk_vals = []
-    pk_vals = []
-    for executor in executors:
-      key_generator = await executor.create_call(await executor.create_value(
-          fn, fn_type))
-      public_key = await executor.create_selection(key_generator, 0)
-      secret_key = await executor.create_selection(key_generator, 1)
-      pk_vals.append(public_key)
-      sk_vals.append(secret_key)
-    pk_type = pk_vals[0].type_signature
-    sk_type = sk_vals[0].type_signature
-    # all_equal whenever owner is non-CLIENTS singleton placement
-    val_all_equal = len(executors) == 1 and key_owner != tff.CLIENTS
-    pk_fed_val = federating_executor.FederatingExecutorValue(
-        pk_vals, tff.FederatedType(pk_type, key_owner, val_all_equal))
-    sk_fed_val = federating_executor.FederatingExecutorValue(
-        sk_vals, tff.FederatedType(sk_type, key_owner, val_all_equal))
-    self.key_references.update_keys(
-        key_owner, public_key=pk_fed_val, secret_key=sk_fed_val)
-
-  async def _share_public_key(self, key_owner, key_receiver):
-    public_key = self.key_references.get_public_key(key_owner)
-    children = self.strategy._get_child_executors(key_receiver)
-    val = await public_key.compute()
-    key_type = public_key.type_signature.member
-    # we currently only support sharing n keys with 1 executor,
-    # or sharing 1 key with n executors
-    if isinstance(val, list):
-      # sharing n keys with 1 executor
-      py_typecheck.check_len(children, 1)
-      executor = children[0]
-      vals = [executor.create_value(v, key_type) for v in val]
-      vals_type = tff.FederatedType(type_conversions.infer_type(val), key_receiver)
-    else:
-      # sharing 1 key with n executors
-      # val is a single tensor
-      vals = [c.create_value(val, key_type) for c in children]
-      vals_type = tff.FederatedType(key_type, key_receiver, all_equal=True)
-    public_key_rcv = federating_executor.FederatingExecutorValue(
-        await asyncio.gather(*vals), vals_type)
-    self.key_references.update_keys(key_owner, public_key=public_key_rcv)
-
   async def _encrypt_values_on_sender(self, val, sender, receiver):
     # Check proper key placement
-    pk_receiver = self.key_references.get_public_key(receiver)
     sk_sender = self.key_references.get_secret_key(sender)
-    assert pk_receiver.type_signature.placement is sender
+    pk_receiver = self.key_references.get_public_key(receiver)
     assert sk_sender.type_signature.placement is sender
+    assert pk_receiver.type_signature.placement is sender
     # Materialize encryptor function definition & type spec
     input_type = val.type_signature.member
     self._input_type_cache = input_type
@@ -229,7 +190,7 @@ class EasyBoxChannel(Channel):
         tff.FederatedType(encryptor_type.result, sender,
             all_equal=val.type_signature.all_equal))
 
-  async def _decrypt_values_on_receiver(self, val, sender=None, receiver=None):
+  async def _decrypt_values_on_receiver(self, val, sender, receiver):
 
     pk_sender = self.key_references.get_public_key(self.sender_placement.name)
     sk_receiver = self.key_references.get_secret_key(
@@ -271,6 +232,54 @@ class EasyBoxChannel(Channel):
       return val_decrypted.internal_representation[0]
     else:
       return val_decrypted.internal_representation
+
+  async def _generate_keys(self, key_owner):
+    py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
+    executors = self.strategy._get_child_executors(key_owner)
+    if self._key_generator is None:
+      self._key_generator = _generate_keys()
+    fn, fn_type = utils.lift_to_computation_spec(self._key_generator)
+    pk_vals, sk_vals = [], []
+    for executor in executors:
+      key_generator = await executor.create_call(await executor.create_value(
+          fn, fn_type))
+      public_key = await executor.create_selection(key_generator, 0)
+      secret_key = await executor.create_selection(key_generator, 1)
+      pk_vals.append(public_key)
+      sk_vals.append(secret_key)
+    pk_type = pk_vals[0].type_signature
+    sk_type = sk_vals[0].type_signature
+    # all_equal whenever owner is non-CLIENTS singleton placement
+    val_all_equal = len(executors) == 1 and key_owner != tff.CLIENTS
+    pk_fed_val = federating_executor.FederatingExecutorValue(
+        pk_vals, tff.FederatedType(pk_type, key_owner, val_all_equal))
+    sk_fed_val = federating_executor.FederatingExecutorValue(
+        sk_vals, tff.FederatedType(sk_type, key_owner, val_all_equal))
+    self.key_references.update_keys(
+        key_owner, public_key=pk_fed_val, secret_key=sk_fed_val)
+
+  async def _share_public_key(self, key_owner, key_receiver):
+    public_key = self.key_references.get_public_key(key_owner)
+    children = self.strategy._get_child_executors(key_receiver)
+    val = await public_key.compute()
+    key_type = public_key.type_signature.member
+    # we currently only support sharing n keys with 1 executor,
+    # or sharing 1 key with n executors
+    if isinstance(val, list):
+      # sharing n keys with 1 executor
+      py_typecheck.check_len(children, 1)
+      executor = children[0]
+      vals = [executor.create_value(v, key_type) for v in val]
+      vals_type = tff.FederatedType(type_conversions.infer_type(val), key_receiver)
+    else:
+      # sharing 1 key with n executors
+      # val is a single tensor
+      vals = [c.create_value(val, key_type) for c in children]
+      vals_type = tff.FederatedType(key_type, key_receiver, all_equal=True)
+    public_key_rcv = federating_executor.FederatingExecutorValue(
+        await asyncio.gather(*vals), vals_type)
+    self.key_references.update_keys(key_owner, public_key=public_key_rcv)
+
 
   async def _zip_val_key(self,
                          placement,
@@ -352,7 +361,7 @@ def _get_other_placement(this_placement, both_placements):
       return p
 
 
-def _check_value_for_send(arg, placements):
+def _check_value_placement(arg, placements):
   py_typecheck.check_type(arg, federating_executor.FederatingExecutorValue)
   py_typecheck.check_type(arg.type_signature, (tff.FederatedType, tff.NamedTupleType))
   value_type = arg.type_signature

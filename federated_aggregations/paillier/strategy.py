@@ -123,10 +123,9 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
                       pl, pl_cardinality))
   
   async def _move(self, value, source_placement, target_placement):
-    await self.channel_grid.setup_channels(self)
+    await asyncio.gather(self.channel_grid.setup_channels(self))
     channel = self.channel_grid[(source_placement, target_placement)]
-    sent = await channel.send(value)
-    return await channel.receive(sent)
+    return await channel.transfer(value)
 
   async def _paillier_setup(self):
     # Load paillier keys on server
