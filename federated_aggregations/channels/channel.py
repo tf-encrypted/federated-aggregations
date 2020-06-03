@@ -117,14 +117,8 @@ class EasyBoxChannel(BaseChannel):
     else:
       pk_element_type = pk_rcv_type
     encryptor_arg_spec = (input_type, pk_element_type, sk_snd_type)
-    hashable_arg_spec = tuple(
-        x.compact_representation() for x in encryptor_arg_spec)
-    encryptor = self._encryptor_cache.get(hashable_arg_spec)
-    if encryptor is None:
-      encryptor = _encrypt_tensor(*encryptor_arg_spec)
-      self._encryptor_cache[hashable_arg_spec] = encryptor
-    encryptor_proto, encryptor_type = utils.lift_to_computation_spec(
-        encryptor, input_arg_type=tff.NamedTupleType(encryptor_arg_spec))
+    encryptor_proto, encryptor_type = _materialize_function_with_cache(
+        _encrypt_tensor, self._encryptor_cache, encryptor_arg_spec)
     # apply encryption on sender placement
     if isinstance(pk_rcv_type, tff.NamedTupleType):
       ###
@@ -329,6 +323,18 @@ class EasyBoxChannel(BaseChannel):
         vals_key, placement, all_equal=False)
 
     return vals_key_zipped.internal_representation
+
+
+def _materialize_function_with_cache(factory_func, cache, arg_spec):
+  hashable_arg_spec = tuple(
+        x.compact_representation() for x in arg_spec)
+  func = cache.get(hashable_arg_spec)
+  if func is None:
+    func = factory_func(*arg_spec)
+    cache[hashable_arg_spec] = func
+  fn_proto, fn_type = utils.lift_to_computation_spec(
+      func, input_arg_type=tff.NamedTupleType(arg_spec))
+  return fn_proto, fn_type
 
 
 def _encrypt_tensor(plaintext_type, pk_rcv_type, sk_snd_type):
