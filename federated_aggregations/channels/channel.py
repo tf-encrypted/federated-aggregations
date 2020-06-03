@@ -49,21 +49,21 @@ class BaseChannel(Channel):
     sent = await self.send(value, sender_placement, receiver_placement)
     rcv_children = self.strategy._get_child_executors(receiver_placement)
     message = await sent.compute()
-    message_type = type_converstions.infer_type(message)
+    message_type = type_conversions.infer_type(message)
     message_value = federating_executor.FederatingExecutorValue(
         await asyncio.gather(
             *[c.create_value(message, message_type) for c in rcv_children]),
         tff.FederatedType(message_type, receiver_placement, all_equal=True))
-    return self.receive(message_value, sender_placement, receiver_placement)
+    return await self.receive(message_value, sender_placement, receiver_placement)
 
 
 class PlaintextChannel(BaseChannel):
   async def send(self, value, source, recipient):
-    del sender, receiver
+    del source, recipient
     return value
 
   async def receive(self, value, source, recipient):
-    del sender, receiver
+    del source, recipient
     return value
 
   async def setup(self):
