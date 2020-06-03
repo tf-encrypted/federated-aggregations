@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from typing import Dict
 
@@ -14,11 +15,13 @@ class ChannelGrid:
 
   async def setup_channels(self, strategy):
     if self.requires_setup:
+      setup_steps = []
       for placement_pair in self._channel_dict:
         channel_cls = self._channel_dict[placement_pair]
         channel = channel_cls(strategy, *placement_pair)
-        await channel.setup()
+        setup_steps.append(channel.setup())
         self._channel_dict[placement_pair] = channel
+      await asyncio.gather(*setup_steps)
       self.requires_setup = False
 
   def __getitem__(self, placements: utils.PlacementPair):

@@ -152,11 +152,13 @@ class EasyBoxChannel(BaseChannel):
       # Encrypt values and return them
       encrypted_values = []
       encrypted_value_types = []
-      for this_pk in pk_receiver.internal_representation:
-        encryptor_arg = await snd_child.create_tuple([v, this_pk, sk])
-        encrypted_values.append(snd_child.create_call(
-            encryptor_fn_value, encryptor_arg))
-        encrypted_value_types.append(encryptor_type.result)
+      encryptor_args = await asyncio.gather(*[
+          snd_child.create_tuple([v, this_pk, sk])
+          for this_pk in pk_receiver.internal_representation])
+      encrypted_values = [
+          snd_child.create_call(encryptor_fn_value, arg)
+          for arg in encryptor_args]
+      encrypted_value_types = [encryptor_type.result] * len(encrypted_values)
       return federating_executor.FederatingExecutorValue(
           await asyncio.gather(*encrypted_values),
           tff.FederatedType(tff.NamedTupleType(encrypted_value_types),
@@ -178,13 +180,18 @@ class EasyBoxChannel(BaseChannel):
     for v in federated_values:
       py_typecheck.check_len(v, len(snd_children))
     # Encrypt values and return them
-    encrypted_values = []
-    for v, pk, sk, snd_child in zip(*federated_values, snd_children):
-      encryptor_fn_value = await snd_child.create_value(
-          encryptor_proto, encryptor_type)
-      encryptor_arg = await snd_child.create_tuple([v, pk, sk])
-      encrypted_values.append(
-          snd_child.create_call(encryptor_fn_value, arg=encryptor_arg))
+    encryptor_fns = asyncio.gather(*[
+        snd_child.create_value(encryptor_proto, encryptor_type)
+        for snd_child in snd_children])
+    encryptor_args = asyncio.gather(*[
+        snd_child.create_tuple([v, pk, sk])
+        for v, pk, sk, snd_child in zip(*federated_values, snd_children)])
+    encryptor_fns, encryptor_args = await asyncio.gather(
+        encryptor_fns, encryptor_args)
+    encrypted_values = [
+        snd_child.create_call(encryptor, arg)
+        for encryptor, arg, snd_child in zip(
+            encryptor_fns, encryptor_args, snd_children)]
     return federating_executor.FederatingExecutorValue(
         await asyncio.gather(*encrypted_values),
         tff.FederatedType(encryptor_type.result, sender,
@@ -238,15 +245,21 @@ class EasyBoxChannel(BaseChannel):
     executors = self.strategy._get_child_executors(key_owner)
     if self._key_generator is None:
       self._key_generator = _generate_keys()
-    fn, fn_type = utils.lift_to_computation_spec(self._key_generator)
+    keygen, keygen_type = utils.lift_to_computation_spec(self._key_generator)
     pk_vals, sk_vals = [], []
-    for executor in executors:
-      key_generator = await executor.create_call(await executor.create_value(
-          fn, fn_type))
-      public_key = await executor.create_selection(key_generator, 0)
-      secret_key = await executor.create_selection(key_generator, 1)
-      pk_vals.append(public_key)
-      sk_vals.append(secret_key)
+    async def keygen_call(child):
+      return await child.create_call(await child.create_value(
+          keygen, keygen_type))
+      
+    key_generators = await asyncio.gather(*[
+        keygen_call(executor) for executor in executors])
+    public_keys = asyncio.gather(*[
+        executor.create_selection(key_generator, 0) 
+        for executor, key_generator in zip(executors, key_generators)])
+    secret_keys = asyncio.gather(*[
+        executor.create_selection(key_generator, 1) 
+        for executor, key_generator in zip(executors, key_generators)])
+    pk_vals, sk_vals = await asyncio.gather(public_keys, secret_keys)
     pk_type = pk_vals[0].type_signature
     sk_type = sk_vals[0].type_signature
     # all_equal whenever owner is non-CLIENTS singleton placement
