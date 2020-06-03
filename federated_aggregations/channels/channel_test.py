@@ -22,7 +22,7 @@ class PlaintextChannelTest(utils.AsyncTestCase):
           [tf.constant(2.0, dtype=tf.float32)] * 3),
       ("server_to_clients", 2.0, tff.SERVER, tff.CLIENTS,
           tf.constant(2.0, dtype=tf.float32)))
-  def test_move_from(self, value, source_placement, target_placement, expected):
+  def test_transfer(self, value, source_placement, target_placement, expected):
     fed_ex = utils.create_test_executor(channel=ch.PlaintextChannel)
     strategy = fed_ex.intrinsic_strategy
     channel_grid = strategy.channel_grid
@@ -31,16 +31,12 @@ class PlaintextChannelTest(utils.AsyncTestCase):
     channel = channel_grid[(tff.CLIENTS, tff.SERVER)]
     val = self.run_sync(fed_ex.create_value(value,
         tff.FederatedType(tf.float32, source_placement)))
-    sent = self.run_sync(channel.send(val))
-    received = self.run_sync(channel.receive(sent))
-    result = self.run_sync(received.compute())
+    transferred = self.run_sync(channel.transfer(val))
+    result = self.run_sync(transferred.compute())
 
     expected_type = type_conversions.infer_type(expected)
-    assert isinstance(sent, federating_executor.FederatingExecutorValue)
-    self.assertEqual(sent.type_signature,
-        tff.FederatedType(tf.float32, source_placement))
-    assert isinstance(received, federating_executor.FederatingExecutorValue)
-    self.assertEqual(received.type_signature,
+    assert isinstance(transferred, federating_executor.FederatingExecutorValue)
+    self.assertEqual(transferred.type_signature,
         tff.FederatedType(expected_type, target_placement, all_equal=True))
     if isinstance(expected, list):
       result = anonymous_tuple.flatten(result)
@@ -68,7 +64,7 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
           [tf.constant(2.0, dtype=tf.float32)] * 3),
       ("server_to_clients", 2.0, tff.SERVER, tff.CLIENTS,
           tf.constant(2.0, dtype=tf.float32)))
-  def test_move_from(self, value, source_placement, target_placement, expected):
+  def test_transfer(self, value, source_placement, target_placement, expected):
     fed_ex = utils.create_test_executor()
     strategy = fed_ex.intrinsic_strategy
     channel_grid = strategy.channel_grid
@@ -78,8 +74,7 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
                             placement_literals.SERVER)]
     val = self.run_sync(fed_ex.create_value(value,
         tff.FederatedType(tf.float32, source_placement)))
-    val_enc = self.run_sync(channel.send(val))
-    val_dec = self.run_sync(channel.receive(val_enc))
-    dec_tf_tensor = self.run_sync(val_dec.compute())
+    transferred = self.run_sync(channel.transfer(val))
+    dec_tf_tensor = self.run_sync(transferred.compute())
 
     self.assertEqual(dec_tf_tensor, expected)
