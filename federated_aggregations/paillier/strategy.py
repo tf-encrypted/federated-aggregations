@@ -84,14 +84,14 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     # Move encryption keys to PAILLIER service & CLIENTS
     server_executor = self._get_child_executors(tff.SERVER, index=0)
     ek_ref = await server_executor.create_selection(output, index=0)
-    ek = federating_executor.FederatingExecutorValue(
-        ek_ref, ek_ref.type_signature)
-    self.encryption_key_clients = await self._move(
-        ek, tff.SERVER, tff.CLIENTS)
-    self.encryption_key_paillier = await self._move(
-        ek, tff.SERVER, paillier_placement.PAILLIER)
-
-    # Keep decryption key on server via formal placement
+    ek = federating_executor.FederatingExecutorValue(ek_ref,
+        tff.FederatedType(ek_ref.type_signature, tff.SERVER, True))
+    placed = await asyncio.gather(
+      self._move(ek, tff.SERVER, tff.CLIENTS),
+      self._move(ek, tff.SERVER, paillier_placement.PAILLIER))
+    self.encryption_key_clients = placed[0]
+    self.encryption_key_paillier = placed[1]
+    # Keep decryption key on server with formal placement
     dk_ref = await server_executor.create_selection(output, index=1)
     self.decryption_key = federating_executor.FederatingExecutorValue(dk_ref,
         tff.FederatedType(dk_ref.type_signature, tff.SERVER, all_equal=True))
@@ -100,50 +100,83 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     self._check_arg_is_anonymous_tuple(arg)
     py_typecheck.check_len(arg.internal_representation, 2)
     value_type = arg.type_signature[0]
-    py_typecheck.check_type(value_type, tff.FederatedType)
+    type_analysis.check_federated_type(value_type, placement=tff.CLIENTS)
+    py_typecheck.check_type(value_type.member, tff.TensorType)
     bitwidth_type = arg.type_signature[1]
     py_typecheck.check_type(bitwidth_type, tff.TensorType)
-
+    # Paillier setup phase
     if self._requires_setup:
-      # Paillier setup phase
       await self._paillier_setup()
       self._requires_setup = False
+    # Encrypt summands on tff.CLIENTS
+    clients_value = await self.executor.create_selection(arg, index=0)
+    encrypted_values = await self._compute_paillier_encryption(
+        self.encryption_key_clients, clients_value)
+    # Perform Paillier sum on ciphertexts
+    encrypted_values = await self._move(encrypted_values,
+        tff.CLIENTS, paillier_placement.PAILLIER)
+    encrypted_sum = await self._compute_paillier_sum(
+        self.encryption_key_paillier, encrypted_values)
+    # Move to server and decrypt the result
+    encrypted_sum = await self._move(encrypted_sum,
+        paillier_placement.PAILLIER, tff.SERVER)
+    return await self._compute_paillier_decryption(
+        self.decryption_key,
+        self.encryption_key_server,
+        encrypted_sum,
+        export_dtype=input_tensor_dtype)
 
-    # Prepare paillier encryption key & client values for encryption eval
-    client_keys = self.encryption_key_clients.internal_representation
-    client_keys_type = self.encryption_key_clients.type_signature
-    client_values = await self.executor.create_selection(arg, index=0)
-    client_values_ir = client_values.internal_representation
-    client_values_type = client_values.type_signature
-    import pdb; pdb.set_trace()
-    client_values_dtype = client_values_type.member.dtype
-    zip_arg = federating_executor.FederatingExecutorValue(
-        anonymous_tuple.AnonymousTuple(
-              ((None, client_keys), (None, client_values_ir))),
-        tff.NamedTupleType((client_keys_type, client_values_type)))
-    encryptor_arg = await self.executor._compute_intrinsic_federated_zip_at_clients(
-        zip_arg)
-
-    # Map encryptor onto encryption key & client values
+  async def _compute_paillier_encryption(self,
+      client_encryption_keys: federating_executor.FederatingExecutorValue,
+      clients_value: federating_executor.FederatingExecutorValue):
+    client_children = self._get_child_executors(tff.CLIENTS)
+    num_clients = len(client_children)
+    py_typecheck.check_len(client_encryption_keys.internal_representation,
+        num_clients)
+    py_typecheck.check_len(clients_value.internal_representation, num_clients)
     encryptor_proto, encryptor_type = utils.lift_to_computation_spec(
         self._paillier_encryptor,
         input_arg_type=tff.NamedTupleType((
-            client_keys_type.member, client_values_type.member)))
-    map_arg = federating_executor.FederatingExecutorValue(
-        anonymous_tuple.AnonymousTuple(
-            ((None, encryptor_proto),
-            (None, encryptor_arg.internal_representation))),
-        tff.NamedTupleType((encryptor_type, encryptor_arg.type_signature)))
-    encrypted_values = await self.executor._compute_intrinsic_federated_map(
-        map_arg)
+            client_encryption_keys.type_signature.member,
+            clients_value.type_signature.member)))
+    encryptor_fns = asyncio.gather(*[
+        c.create_value(encryptor_proto, encryptor_type)
+        for c in client_children])
+    encryptor_args = asyncio.gather(*[c.create_tuple((ek, v)) for c, ek, v in zip(
+        client_children,
+        client_encryption_keys.internal_representation,
+        clients_value.internal_representation)])
+    encryptor_fns, encryptor_args = await asyncio.gather(
+        encryptor_fns, encryptor_args)
+    encrypted_values = await asyncio.gather(*[
+      c.create_call(fn, arg) for c, fn, arg in zip(
+          client_children, encryptor_fns, encryptor_args)])
+    return federating_executor.FederatingExecutorValue(encrypted_values,
+        tff.FederatedType(encryptor_type.result, tff.CLIENTS,
+            clients_value.type_signature.all_equal))
 
-    # TODO compute _paillier_sequence_sum on encrypted_values
-    encrypted_values = await self._move(encrypted_values,
-        tff.CLIENTS, paillier_placement.PAILLIER)
+  async def _compute_paillier_sum(self,
+      encryption_key: federating_executor.FederatingExecutorValue,
+      values: federating_executor.FederatingExecutorValue):
+    paillier_child = self._get_child_executors(
+        paillier_placement.PAILLIER, index=0)
     sum_proto, sum_type = utils.lift_to_computation_spec(
         self._paillier_sequence_sum,
         input_arg_type=tff.NamedTupleType((
-            self.encryption_key_paillier.type_signature.member,
-            encrypted_values.type_signature.member)))
+            encryption_key.type_signature.member,
+            tff.NamedTupleType([vt.member for vt in values.type_signature]))))
+    sum_fn = paillier_child.create_value(sum_proto, sum_type)
+    sum_arg = paillier_child.create_tuple((
+        encryption_key.internal_representation,
+        await paillier_child.create_tuple(values.internal_representation)))
+    sum_fn, sum_arg = await asyncio.gather(sum_fn, sum_arg)
+    encrypted_sum = await paillier_child.create_call(sum_fn, sum_arg)
+    return federating_executor.FederatingExecutorValue(encrypted_sum,
+        tff.FederatedType(sum_type.result, paillier_placement.PAILLIER, True))
 
-    # TODO perform _paillier_decrypt on sum result
+  async def _compute_paillier_decryption(self,
+      decryption_key: federating_executor.FederatingExecutorValue,
+      encryption_key: federating_executor.FederatingExecutorValue,
+      value: federating_executor.FederatingExecutorValue,
+      export_dtype):
+    pass
