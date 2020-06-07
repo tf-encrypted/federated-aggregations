@@ -18,8 +18,8 @@ from federated_aggregations.channels import channel_test_utils as utils
 
 class PlaintextChannelTest(utils.AsyncTestCase):
   @parameterized.named_parameters(
-      ("clients_to_server", [2.0] * 3, tff.CLIENTS, tff.SERVER,
-          [tf.constant(2.0, dtype=tf.float32)] * 3),
+      ("clients_to_server", [1., 2., 3.], tff.CLIENTS, tff.SERVER,
+          [tf.constant(i + 1, dtype=tf.float32) for i in range(3)]),
       ("server_to_clients", 2.0, tff.SERVER, tff.CLIENTS,
           tf.constant(2.0, dtype=tf.float32)))
   def test_transfer(self, value, source_placement, target_placement, expected):
@@ -65,8 +65,8 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
     self.assertEqual(str(sk_server.type_signature), 'uint8[32]@SERVER')
 
   @parameterized.named_parameters(
-      ("clients_to_server", [2.0] * 3, tff.CLIENTS, tff.SERVER,
-          [tf.constant(2.0, dtype=tf.float32)] * 3),
+      ("clients_to_server", [1., 2., 3.], tff.CLIENTS, tff.SERVER,
+          [tf.constant(i + 1, dtype=tf.float32) for i in range(3)]),
       ("server_to_clients", 2.0, tff.SERVER, tff.CLIENTS,
           tf.constant(2.0, dtype=tf.float32)))
   def test_transfer(self, value, source_placement, target_placement, expected):
