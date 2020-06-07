@@ -80,8 +80,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     _check_key_inputter(key_inputter)
     fed_output = await self._eval(key_inputter, tff.SERVER, all_equal=True)
     output = fed_output.internal_representation[0]
-
-    # Move encryption keys to PAILLIER service & CLIENTS
+    # Broadcast encryption key to all placements
     server_executor = self._get_child_executors(tff.SERVER, index=0)
     ek_ref = await server_executor.create_selection(output, index=0)
     ek = federating_executor.FederatingExecutorValue(ek_ref,
@@ -89,6 +88,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     placed = await asyncio.gather(
       self._move(ek, tff.SERVER, tff.CLIENTS),
       self._move(ek, tff.SERVER, paillier_placement.PAILLIER))
+    self.encryption_key_server = ek
     self.encryption_key_clients = placed[0]
     self.encryption_key_paillier = placed[1]
     # Keep decryption key on server with formal placement
@@ -104,6 +104,8 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     py_typecheck.check_type(value_type.member, tff.TensorType)
     bitwidth_type = arg.type_signature[1]
     py_typecheck.check_type(bitwidth_type, tff.TensorType)
+    # Stash input dtype for later
+    input_tensor_dtype = value_type.member.dtype
     # Paillier setup phase
     if self._requires_setup:
       await self._paillier_setup()
@@ -179,4 +181,22 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
       encryption_key: federating_executor.FederatingExecutorValue,
       value: federating_executor.FederatingExecutorValue,
       export_dtype):
-    pass
+    server_child = self._get_child_executors(tff.SERVER, index=0)
+    import pdb; pdb.set_trace()
+    decryptor_arg_spec = (decryption_key.type_signature.member,
+        encryption_key.type_signature.member,
+        value.type_signature.member)
+    decryptor_proto, decryptor_type = utils.materialize_computation_from_cache(
+        paillier_comp.make_decryptor,
+        self._paillier_decryptor_cache,
+        arg_spec=decryptor_arg_spec,
+        dtype=export_dtype)
+    decryptor_fn = server_child.create_value(decryptor_proto, decryptor_type)
+    decryptor_arg = server_child.create_tuple((
+        decryption_key.internal_representation,
+        encryption_key.internal_representation,
+        value.internal_representation))
+    decryptor_fn, decryptor_arg = await asyncio.gather(decryptor_fn, decryptor_arg)
+    decrypted_value = await server_child.create_call(decryptor_fn, decryptor_arg)
+    return federating_executor.FederatingExecutorValue(decrypted_value,
+        tff.FederatedType(decryptor_type.result, tff.SERVER, True))
