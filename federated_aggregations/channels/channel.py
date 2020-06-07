@@ -67,7 +67,8 @@ class BaseChannel(Channel):
         tff.FederatedType(member_type, receiver_placement, all_equal))
     else:
       rcv_child = rcv_children[0]
-      message_value = federating_executor.FederatingExecutorValue(
+      if isinstance(message_type, tff.NamedTupleType):
+        message_value = federating_executor.FederatingExecutorValue(
           anonymous_tuple.from_container(
               await asyncio.gather(*[
                   rcv_child.create_value(m, t)
@@ -75,6 +76,11 @@ class BaseChannel(Channel):
           tff.NamedTupleType([
               tff.FederatedType(mt, receiver_placement, True)
               for mt in message_type]))
+      else:
+        message_value = federating_executor.FederatingExecutorValue(
+          await rcv_child.create_value(message, message_type),
+          tff.FederatedType(message_type, receiver_placement,
+              value.type_signature.all_equal))
     return await self.receive(message_value, sender_placement, receiver_placement)
 
 

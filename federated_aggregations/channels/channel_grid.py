@@ -16,12 +16,13 @@ class ChannelGrid:
   async def setup_channels(self, strategy):
     if self.requires_setup:
       setup_steps = []
-      for placement_pair in self._channel_dict:
-        channel_cls = self._channel_dict[placement_pair]
-        channel = channel_cls(strategy, *placement_pair)
+      tmp_channel_dict = {}
+      for placement_pair, channel_factory in self._channel_dict.items():
+        channel = channel_factory(strategy, *placement_pair)
         setup_steps.append(channel.setup())
-        self._channel_dict[placement_pair] = channel
+        tmp_channel_dict[placement_pair] = channel
       await asyncio.gather(*setup_steps)
+      self._channel_dict = tmp_channel_dict
       self.requires_setup = False
 
   def __getitem__(self, placements: utils.PlacementPair):

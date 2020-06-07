@@ -70,7 +70,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
                       pl, pl_cardinality))
   
   async def _move(self, value, source_placement, target_placement):
-    await asyncio.gather(self.channel_grid.setup_channels(self))
+    await self.channel_grid.setup_channels(self)
     channel = self.channel_grid[(source_placement, target_placement)]
     return await channel.transfer(value)
 
