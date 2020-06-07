@@ -36,10 +36,15 @@ class PlaintextChannelTest(utils.AsyncTestCase):
 
     expected_type = type_conversions.infer_type(expected)
     assert isinstance(transferred, federating_executor.FederatingExecutorValue)
-    self.assertEqual(transferred.type_signature,
-        tff.FederatedType(expected_type, target_placement, all_equal=True))
     if isinstance(expected, list):
+      assert isinstance(transferred.type_signature, tff.NamedTupleType)
+      for i, elt_type_spec in enumerate(transferred.type_signature):
+        self.assertEqual(elt_type_spec,
+            tff.FederatedType(expected_type[i], target_placement, True))
       result = anonymous_tuple.flatten(result)
+    else:
+      self.assertEqual(transferred.type_signature,
+          tff.FederatedType(expected_type, target_placement, True))
     self.assertEqual(result, expected)
 
 
@@ -75,6 +80,11 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
     val = self.run_sync(fed_ex.create_value(value,
         tff.FederatedType(tf.float32, source_placement)))
     transferred = self.run_sync(channel.transfer(val))
-    dec_tf_tensor = self.run_sync(transferred.compute())
+    decrypted = self.run_sync(transferred.compute())
 
-    self.assertEqual(dec_tf_tensor, expected)
+    if isinstance(expected, list):
+      decrypted = anonymous_tuple.flatten(decrypted)
+      self.assertEqual(decrypted, expected)
+    else:
+      for d in decrypted:
+        self.assertEqual(d, expected)
