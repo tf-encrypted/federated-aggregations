@@ -10,9 +10,9 @@ from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
 from tensorflow_federated.python.core.impl.types import type_analysis
 from tensorflow_federated.python.core.impl.types import type_conversions
-from tf_encrypted.primitives.sodium import easy_box
 
 from federated_aggregations import utils
+from federated_aggregations.channels import computations as sodium_comp
 from federated_aggregations.channels import key_store
 
 
@@ -165,8 +165,8 @@ class EasyBoxChannel(BaseChannel):
     sk_snd_type = sk_sender.type_signature.member
     pk_element_type = pk_rcv_type[0]
     encryptor_arg_spec = (input_type, pk_element_type, sk_snd_type)
-    encryptor_proto, encryptor_type = _materialize_function_with_cache(
-        _encrypt_tensor, self._encryptor_cache, encryptor_arg_spec)
+    encryptor_proto, encryptor_type = utils.materialize_computation_from_cache(
+        sodium_comp.make_encryptor, self._encryptor_cache, encryptor_arg_spec)
     ### Prepare encryption arguments
     v = val.internal_representation[0]
     sk = sk_sender.internal_representation[0]
@@ -217,8 +217,8 @@ class EasyBoxChannel(BaseChannel):
     sk_snd_type = sk_sender.type_signature.member
     pk_element_type = pk_rcv_type
     encryptor_arg_spec = (input_type, pk_element_type, sk_snd_type)
-    encryptor_proto, encryptor_type = _materialize_function_with_cache(
-        _encrypt_tensor, self._encryptor_cache, encryptor_arg_spec)
+    encryptor_proto, encryptor_type = utils.materialize_computation_from_cache(
+        sodium_comp.make_encryptor, self._encryptor_cache, encryptor_arg_spec)
     ### Encrypt values and return them
     encryptor_fns = asyncio.gather(*[
         snd_child.create_value(encryptor_proto, encryptor_type)
@@ -265,8 +265,8 @@ class EasyBoxChannel(BaseChannel):
     input_element_type = input_type
     pk_element_type = pk_snd_type
     decryptor_arg_spec = (input_element_type, pk_element_type, sk_rcv_type)
-    decryptor_proto, decryptor_type = _materialize_function_with_cache(
-        _decrypt_tensor,
+    decryptor_proto, decryptor_type = utils.materialize_computation_from_cache(
+        sodium_comp.make_decryptor,
         self._decryptor_cache,
         decryptor_arg_spec,
         orig_tensor_dtype=self._input_type_cache.dtype)
@@ -319,8 +319,8 @@ class EasyBoxChannel(BaseChannel):
     input_element_type = input_type
     pk_element_type = pk_snd_type[0]
     decryptor_arg_spec = (input_element_type, pk_element_type, sk_rcv_type)
-    decryptor_proto, decryptor_type = _materialize_function_with_cache(
-        _decrypt_tensor,
+    decryptor_proto, decryptor_type = utils.materialize_computation_from_cache(
+        sodium_comp.make_decryptor,
         self._decryptor_cache,
         decryptor_arg_spec,
         orig_tensor_dtype=self._input_type_cache.dtype)
@@ -345,7 +345,7 @@ class EasyBoxChannel(BaseChannel):
     py_typecheck.check_type(key_owner, placement_literals.PlacementLiteral)
     executors = self.strategy._get_child_executors(key_owner)
     if self._key_generator is None:
-      self._key_generator = _generate_keys()
+      self._key_generator = sodium_comp.make_keygen()
     keygen, keygen_type = utils.lift_to_computation_spec(self._key_generator)
     pk_vals, sk_vals = [], []
     async def keygen_call(child):
@@ -393,55 +393,6 @@ class EasyBoxChannel(BaseChannel):
     public_key_rcv = federating_executor.FederatingExecutorValue(
         await asyncio.gather(*vals), vals_type)
     self.key_references.update_keys(key_owner, public_key=public_key_rcv)
-
-
-def _materialize_function_with_cache(factory_func, cache, arg_spec, **factory_kwargs):
-  hashable_arg_spec = tuple(
-        x.compact_representation() for x in arg_spec)
-  func = cache.get(hashable_arg_spec)
-  if func is None:
-    func = factory_func(*arg_spec, **factory_kwargs)
-    cache[hashable_arg_spec] = func
-  fn_proto, fn_type = utils.lift_to_computation_spec(
-      func, input_arg_type=tff.NamedTupleType(arg_spec))
-  return fn_proto, fn_type
-
-
-def _encrypt_tensor(plaintext_type, pk_rcv_type, sk_snd_type):
-  @tff.tf_computation
-  def encrypt_tensor(plaintext, pk_rcv, sk_snd):
-    pk_rcv = easy_box.PublicKey(pk_rcv)
-    sk_snd = easy_box.SecretKey(sk_snd)
-    nonce = easy_box.gen_nonce()
-    ciphertext, mac = easy_box.seal_detached(plaintext, nonce, pk_rcv, sk_snd)
-    return ciphertext.raw, mac.raw, nonce.raw
-
-  return encrypt_tensor
-
-
-def _decrypt_tensor(sender_values_type, pk_snd_type, sk_rcv_snd,
-    orig_tensor_dtype):
-  @tff.tf_computation(sender_values_type, pk_snd_type, sk_rcv_snd)
-  def decrypt_tensor(sender_values, pk_snd, sk_rcv):
-    ciphertext = easy_box.Ciphertext(sender_values[0])
-    mac = easy_box.Mac(sender_values[1])
-    nonce = easy_box.Nonce(sender_values[2])
-    pk_snd = easy_box.PublicKey(pk_snd)
-    sk_rcv = easy_box.SecretKey(sk_rcv)
-    plaintext_recovered = easy_box.open_detached(
-        ciphertext, mac, nonce, pk_snd, sk_rcv, orig_tensor_dtype)
-    return plaintext_recovered
-
-  return decrypt_tensor
-
-
-def _generate_keys():
-  @computations.tf_computation()
-  def key_generator():
-    pk, sk = easy_box.gen_keypair()
-    return pk.raw, sk.raw
-
-  return key_generator
 
 
 def _get_other_placement(this_placement, both_placements):

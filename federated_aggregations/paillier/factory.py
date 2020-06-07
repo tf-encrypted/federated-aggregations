@@ -9,6 +9,7 @@ from tensorflow_federated.python.core.impl.types import placement_literals
 from federated_aggregations import channels
 from federated_aggregations.paillier import placement as paillier_placement
 from federated_aggregations.paillier import strategy as paillier_strategy
+from federated_aggregations.paillier import computations as paillier_comp
 
 
 # separation of setup & sending -- setup phase only needs to happen once
@@ -28,41 +29,34 @@ def local_paillier_executor_factory(
     num_client_executors=32,
     server_tf_device=None,
     aggregator_tf_device=None,
-    client_tf_devices=tuple(),
-):
-
+    client_tf_devices=tuple()):
   # TODO consider parameterizing this function with channel_grid
   channel_grid = channels.ChannelGrid({
       (tff.CLIENTS,
-       paillier_placement.PAILLIER): channels.EasyBoxChannel,
+       paillier_placement.PAILLIER): channels.PlaintextChannel,
       (tff.CLIENTS, 
        tff.SERVER): channels.PlaintextChannel,
       (paillier_placement.PAILLIER, 
        tff.SERVER): channels.PlaintextChannel})
-
   def intrinsic_strategy_fn(executor):
     return paillier_strategy.PaillierStrategy(executor, channel_grid,
-        paillier_strategy.paillier_keygen(bitlength=2048))
+        paillier_comp.make_keygen(bitlength=2048))
 
   device_scheduler = _AggregatorDeviceScheduler(
       server_tf_device, aggregator_tf_device, client_tf_devices)
-
   stack_func = functools.partial(
       _create_paillier_federated_stack,
       num_client_executors=num_client_executors,
       aggregator_device_scheduler=device_scheduler,
       intrinsic_strategy_fn=intrinsic_strategy_fn)
-
   if num_clients is None:
     return _create_inferred_cardinality_factory(
         stack_func)
-
   return _create_explicit_cardinality_factory(
       num_clients, stack_func)
 
 def _create_explicit_cardinality_factory(
     num_clients, stack_func):
-
   def _make_factory(cardinalities):
     num_requested_clients = cardinalities.get(tff.CLIENTS)
     if num_requested_clients is not None and num_requested_clients != num_clients:
@@ -75,7 +69,6 @@ def _create_explicit_cardinality_factory(
 
 
 def _create_inferred_cardinality_factory(stack_func):
-
   def _make_factory(cardinalities):
     py_typecheck.check_type(cardinalities, dict)
     for k, v in cardinalities.items():
@@ -93,24 +86,20 @@ def _create_inferred_cardinality_factory(stack_func):
 
 def _create_paillier_federated_stack(num_clients, num_client_executors,
     aggregator_device_scheduler, intrinsic_strategy_fn):
-
   client_bottom_stacks = [
       executor_stacks._create_bottom_stack(
           device=aggregator_device_scheduler.next_client_device())
-      for _ in range(num_client_executors)
-  ]
+      for _ in range(num_client_executors)]
   executor_dict = {
       tff.CLIENTS: [
           client_bottom_stacks[k % len(client_bottom_stacks)]
-          for k in range(num_clients)
-      ],
+          for k in range(num_clients)],
       tff.SERVER: executor_stacks._create_bottom_stack(
           device=aggregator_device_scheduler.server_device()),
       paillier_placement.PAILLIER: executor_stacks._create_bottom_stack(
           device=aggregator_device_scheduler.aggregator_device()),
       None: executor_stacks._create_bottom_stack(
-          device=aggregator_device_scheduler.server_device()),
-  }
+          device=aggregator_device_scheduler.server_device())}
   return executor_stacks._complete_stack(
       tff.framework.FederatingExecutor(
           executor_dict, intrinsic_strategy_fn=intrinsic_strategy_fn))

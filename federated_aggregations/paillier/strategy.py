@@ -1,72 +1,18 @@
 import asyncio
 from collections import OrderedDict
 
-import tensorflow as tf
 import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computation_types
 from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
-from tf_encrypted.primitives import paillier
+from tensorflow_federated.python.core.impl.types import type_analysis
 
 from federated_aggregations import utils
 from federated_aggregations.channels import channel
 from federated_aggregations.paillier import placement as paillier_placement
-
-
-def paillier_keygen(bitlength=2048):
-
-  @tff.tf_computation
-  def _keygen():
-    encryption_key, decryption_key = paillier.gen_keypair(bitlength)
-    ek_raw = encryption_key.export(dtype=tf.string)
-    dk_raw = decryption_key.export(dtype=tf.string)
-    return ek_raw, dk_raw
-
-  return _keygen
-
-
-def _paillier_encrypt():
-
-  @tff.tf_computation
-  def _encrypt(encryption_key_raw, plaintext):
-    ek = paillier.EncryptionKey(encryption_key_raw)
-    ciphertext = paillier.encrypt(ek, plaintext)
-    return ciphertext.export(dtype=tf.string)
-
-  return _encrypt
-
-
-def _paillier_decrypt(dtype):
-  # FIXME figure out how different dtypes are chosen;
-  #    maybe a dtype-specific fn cache on the strategy at runtime?
-  # could also pass it directly to the tf_computation as a tf.string tensor,
-  # but that feels like a hack
-
-  @tff.tf_computation((tf.string, tf.string), tf.string, tf.string)
-  def _decrypt(decryption_key_raw, encryption_key_raw, ciphertext_raw):
-    dk = paillier.DecryptionKey(*decryption_key_raw)
-    ek = paillier.EncryptionKey(encryption_key_raw)
-    ciphertext = paillier.Ciphertext(ek, ciphertext_raw)
-    return paillier.decrypt(dk, ciphertext, dtype)
-
-  return _decrypt
-
-
-def _paillier_sequence_sum():
-
-  @tff.tf_computation
-  def _sequence_sum(encryption_key_raw, *summands_raw):
-    ek = paillier.EncryptionKey(encryption_key_raw)
-    result = paillier.Ciphertext(ek, summands_raw[0])
-    for summand in summands_raw[1:]:
-      summand = paillier.Ciphertext(ek, summand)
-      result = paillier.add(ek, result, summand, do_refresh=False)
-    refreshed_sum = paillier.refresh(ek, result)
-    return refreshed_sum.export(dtype=tf.string)
-
-  return _sequence_sum
+from federated_aggregations.paillier import computations as paillier_comp
 
 
 def _check_key_inputter(fn_value):
@@ -91,16 +37,17 @@ def _check_key_inputter(fn_value):
   py_typecheck.check_type(dk_type[1], tff.TensorType)
 
 
-# TODO: change superclass to tff.framework.CentralizedIntrinsicStrategy
+# TODO: change superclass to tff.framework.DefaultFederatingStrategy 
+#       when the FederatingStrategy change lands on master
 class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
   def __init__(self, parent_executor, channel_grid, key_inputter):
     super().__init__(parent_executor)
     self.channel_grid = channel_grid
     self._requires_setup = True  # lazy key setup
     self._key_inputter = key_inputter
-    self._paillier_encryptor = _paillier_encrypt()
-    self._paillier_decryptor_cache = OrderedDict()
-    self._paillier_sequence_sum = _paillier_sequence_sum()
+    self._paillier_encryptor = paillier_comp.make_encryptor()
+    self._paillier_decryptor_cache = {}
+    self._paillier_sequence_sum = paillier_comp.make_sequence_sum()
 
   @classmethod
   def validate_executor_placements(cls, executor_placements):
