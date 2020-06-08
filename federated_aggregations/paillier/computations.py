@@ -34,7 +34,6 @@ def make_decryptor(
     ek = paillier.EncryptionKey(encryption_key_raw)
     c = tf_big.convert_to_tensor(ciphertext_raw)
     ciphertext = paillier.Ciphertext(ek, c)
-    import pdb; pdb.set_trace()
     return paillier.decrypt(dk, ciphertext, dtype)
 
   return _decrypt

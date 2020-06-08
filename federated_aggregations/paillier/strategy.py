@@ -182,7 +182,6 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
       value: federating_executor.FederatingExecutorValue,
       export_dtype):
     server_child = self._get_child_executors(tff.SERVER, index=0)
-    import pdb; pdb.set_trace()
     decryptor_arg_spec = (decryption_key.type_signature.member,
         encryption_key.type_signature.member,
         value.type_signature.member)
