@@ -57,7 +57,7 @@ class PaillierStrategyTest(parameterized.TestCase):
       factory.local_paillier_executor_factory()),
       ('paillier_executor_factory_five_clients',
       factory.local_paillier_executor_factory(num_clients=5)))
-  def test_federated_secure_sum(self, factory):
+  def test_federated_secure_sum_with(self, factory):
     secure_paillier_addition = make_integer_secure_sum(None)
     with _install_executor(factory):
       result = secure_paillier_addition([1, 2, 3, 4, 5])
@@ -72,4 +72,28 @@ class PaillierStrategyTest(parameterized.TestCase):
     secure_paillier_addition = make_integer_secure_sum(input_shape)
     with _install_executor(factory.local_paillier_executor_factory()):
       result = secure_paillier_addition([input_tensor] * NUM_CLIENTS)
+    np.testing.assert_almost_equal(result, expected)
+
+  @parameterized.named_parameters(
+      (('{}'.format(n), n) for n in [5, 20, 50]))
+  def test_secure_sum_many_clients(self, num_clients):
+    secure_paillier_addition = make_integer_secure_sum([1, 1])
+    with _install_executor(factory.local_paillier_executor_factory()):
+      result = secure_paillier_addition([[[1]]] * num_clients)
+    self.assertAlmostEqual(result, num_clients)
+
+  @parameterized.named_parameters(
+      ('{}x{}'.format(r, c), r, c) for r, c in [(1, 1), (2, 2), (5, 5), (10, 10)])
+  def test_secure_sum_larger_values(self, first_dim, second_dim):
+    NUM_CLIENTS = 5
+    shape = (first_dim, second_dim)
+    input_tensor = np.ones(shape, dtype=np.int32)
+    member_type = tff.TensorType(tf.int32, shape)
+    @tff.federated_computation(tff.FederatedType(member_type, tff.CLIENTS))
+    def secure_paillier_addition(x):
+      bitwidth = 8  # assume upper-bound of 2^8 on summation result
+      return tff.federated_secure_sum(x, bitwidth)
+    with _install_executor(factory.local_paillier_executor_factory()):
+      result = secure_paillier_addition([input_tensor] * NUM_CLIENTS)
+    expected = input_tensor * NUM_CLIENTS
     np.testing.assert_almost_equal(result, expected)
