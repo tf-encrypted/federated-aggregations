@@ -8,33 +8,12 @@ from tensorflow_federated.python.core.api import computation_types
 from tensorflow_federated.python.core.impl.executors import federating_executor
 from tensorflow_federated.python.core.impl.types import placement_literals
 from tensorflow_federated.python.core.impl.types import type_analysis
+from tensorflow_federated.python.core.impl.types import type_conversions
 
 from federated_aggregations import utils
 from federated_aggregations.channels import channel
 from federated_aggregations.paillier import placement as paillier_placement
 from federated_aggregations.paillier import computations as paillier_comp
-
-
-def _check_key_inputter(fn_value):
-  fn_type = fn_value.type_signature
-  py_typecheck.check_type(fn_type, tff.FunctionType)
-  try:
-    py_typecheck.check_len(fn_type.result, 2)
-  except ValueError:
-    raise ValueError(
-        'Expected 2 elements in the output of key_inputter, '
-        'found {}.'.format(len(fn_type.result)))
-  ek_type, dk_type = fn_type.result
-  py_typecheck.check_type(ek_type, tff.TensorType)
-  py_typecheck.check_type(dk_type, tff.NamedTupleType)
-  try:
-    py_typecheck.check_len(dk_type, 2)
-  except ValueError:
-    raise ValueError(
-        'Expected a two element tuple for the decryption key from '
-        'key_inputter, found {} elements.'.format(len(fn_type.result)))
-  py_typecheck.check_type(dk_type[0], tff.TensorType)
-  py_typecheck.check_type(dk_type[1], tff.TensorType)
 
 
 # TODO: change superclass to tff.framework.DefaultFederatingStrategy 
@@ -46,8 +25,9 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     self._requires_setup = True  # lazy key setup
     self._key_inputter = key_inputter
     self._paillier_encryptor = paillier_comp.make_encryptor()
-    self._paillier_decryptor_cache = {}
     self._paillier_sequence_sum = paillier_comp.make_sequence_sum()
+    self._paillier_decryptor_cache = {}
+    self._reshape_function_cache = {}
 
   @classmethod
   def validate_executor_placements(cls, executor_placements):
@@ -102,16 +82,18 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     value_type = arg.type_signature[0]
     type_analysis.check_federated_type(value_type, placement=tff.CLIENTS)
     py_typecheck.check_type(value_type.member, tff.TensorType)
-    bitwidth_type = arg.type_signature[1]
-    py_typecheck.check_type(bitwidth_type, tff.TensorType)
     # Stash input dtype for later
     input_tensor_dtype = value_type.member.dtype
     # Paillier setup phase
     if self._requires_setup:
       await self._paillier_setup()
       self._requires_setup = False
+    # Stash input shape, and reshape input tensor to matrix-form
+    input_tensor_shape = value_type.member.shape
+    clients_value = await self._compute_reshape_on_tensor(
+        await self.executor.create_selection(arg, index=0),
+        output_shape=[1, input_tensor_shape.num_elements()])
     # Encrypt summands on tff.CLIENTS
-    clients_value = await self.executor.create_selection(arg, index=0)
     encrypted_values = await self._compute_paillier_encryption(
         self.encryption_key_clients, clients_value)
     # Perform Paillier sum on ciphertexts
@@ -122,11 +104,13 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     # Move to server and decrypt the result
     encrypted_sum = await self._move(encrypted_sum,
         paillier_placement.PAILLIER, tff.SERVER)
-    return await self._compute_paillier_decryption(
+    decrypted_result = await self._compute_paillier_decryption(
         self.decryption_key,
         self.encryption_key_server,
         encrypted_sum,
         export_dtype=input_tensor_dtype)
+    return await self._compute_reshape_on_tensor(
+        decrypted_result, output_shape=input_tensor_shape.as_list())
 
   async def _compute_paillier_encryption(self,
       client_encryption_keys: federating_executor.FederatingExecutorValue,
@@ -197,5 +181,54 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         value.internal_representation))
     decryptor_fn, decryptor_arg = await asyncio.gather(decryptor_fn, decryptor_arg)
     decrypted_value = await server_child.create_call(decryptor_fn, decryptor_arg)
-    return federating_executor.FederatingExecutorValue(decrypted_value,
+    return federating_executor.FederatingExecutorValue([decrypted_value],
         tff.FederatedType(decryptor_type.result, tff.SERVER, True))
+
+  async def _compute_reshape_on_tensor(self, tensor, output_shape):
+    tensor_type = tensor.type_signature.member
+    shape_type = type_conversions.infer_type(output_shape)
+    reshaper_proto, reshaper_type = utils.materialize_computation_from_cache(
+        paillier_comp.make_reshape_tensor,
+        self._reshape_function_cache,
+        arg_spec=(tensor_type,),
+        output_shape=output_shape)
+    tensor_placement = tensor.type_signature.placement
+    children = self._get_child_executors(tensor_placement)
+    py_typecheck.check_len(tensor.internal_representation, len(children))
+    reshaper_fns = await asyncio.gather(*[
+        ex.create_value(reshaper_proto, reshaper_type) for ex in children])
+    reshaped_tensors = await asyncio.gather(*[
+        ex.create_call(fn, arg) for ex, fn, arg in zip(
+            children, reshaper_fns, tensor.internal_representation)])
+    output_tensor_spec = tff.FederatedType(
+        tff.TensorType(tensor_type.dtype, output_shape),
+        tensor_placement,
+        tensor.type_signature.all_equal)
+    return federating_executor.FederatingExecutorValue(
+        reshaped_tensors, output_tensor_spec)
+
+
+    
+
+
+
+def _check_key_inputter(fn_value):
+  fn_type = fn_value.type_signature
+  py_typecheck.check_type(fn_type, tff.FunctionType)
+  try:
+    py_typecheck.check_len(fn_type.result, 2)
+  except ValueError:
+    raise ValueError(
+        'Expected 2 elements in the output of key_inputter, '
+        'found {}.'.format(len(fn_type.result)))
+  ek_type, dk_type = fn_type.result
+  py_typecheck.check_type(ek_type, tff.TensorType)
+  py_typecheck.check_type(dk_type, tff.NamedTupleType)
+  try:
+    py_typecheck.check_len(dk_type, 2)
+  except ValueError:
+    raise ValueError(
+        'Expected a two element tuple for the decryption key from '
+        'key_inputter, found {} elements.'.format(len(fn_type.result)))
+  py_typecheck.check_type(dk_type[0], tff.TensorType)
+  py_typecheck.check_type(dk_type[1], tff.TensorType)

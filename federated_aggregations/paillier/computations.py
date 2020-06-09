@@ -56,3 +56,11 @@ def make_sequence_sum():
     return refreshed_result.export(dtype=tf.string)
 
   return _sequence_sum
+
+
+def make_reshape_tensor(tensor_type, output_shape):
+  @tff.tf_computation
+  def _reshape_tensor(tensor):
+    return tf.reshape(tensor, output_shape)
+
+  return _reshape_tensor
