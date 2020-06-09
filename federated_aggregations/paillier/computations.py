@@ -40,14 +40,21 @@ def make_decryptor(
 
 
 def make_sequence_sum():
+  def adder(ek, xs):
+    assert len(xs) >= 1
+    if len(xs) == 1:
+      return xs[0]
+    split = len(xs) // 2
+    left = xs[:split]
+    right = xs[split:]
+    return paillier.add(ek, adder(ek, left), adder(ek, right), do_refresh=False)
+
   @tff.tf_computation
   def _sequence_sum(encryption_key_raw, summands_raw):
     ek = paillier.EncryptionKey(encryption_key_raw)
-    result = paillier.Ciphertext(ek, summands_raw[0])
-    for summand in summands_raw[1:]:
-      summand = paillier.Ciphertext(ek, summand)
-      result = paillier.add(ek, result, summand, do_refresh=False)
-    refreshed_sum = paillier.refresh(ek, result)
-    return refreshed_sum.export(dtype=tf.string)
+    summands = [paillier.Ciphertext(ek, summand) for summand in summands_raw]
+    result = adder(ek, summands)
+    refreshed_result = paillier.refresh(ek, result)
+    return refreshed_result.export(dtype=tf.string)
 
   return _sequence_sum
