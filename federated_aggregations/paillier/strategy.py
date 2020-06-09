@@ -90,9 +90,12 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
       self._requires_setup = False
     # Stash input shape, and reshape input tensor to matrix-form
     input_tensor_shape = value_type.member.shape
-    clients_value = await self._compute_reshape_on_tensor(
-        await self.executor.create_selection(arg, index=0),
-        output_shape=[1, input_tensor_shape.num_elements()])
+    if len(input_tensor_shape) != 2:
+      clients_value = await self._compute_reshape_on_tensor(
+          await self.executor.create_selection(arg, index=0),
+          output_shape=[1, input_tensor_shape.num_elements()])
+    else:
+      clients_value = await self.executor.create_selection(arg, index=0)
     # Encrypt summands on tff.CLIENTS
     encrypted_values = await self._compute_paillier_encryption(
         self.encryption_key_clients, clients_value)
@@ -206,10 +209,6 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         tensor.type_signature.all_equal)
     return federating_executor.FederatingExecutorValue(
         reshaped_tensors, output_tensor_spec)
-
-
-    
-
 
 
 def _check_key_inputter(fn_value):
