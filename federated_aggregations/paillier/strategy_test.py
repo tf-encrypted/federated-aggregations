@@ -18,27 +18,6 @@ def _install_executor(executor_factory_instance):
   return tff.framework.get_context_stack().install(context)
 
 
-def create_test_executor(number_of_clients: int = 3):
-
-  def create_bottom_stack():
-    executor = tff.framework.EagerTFExecutor()
-    return tff.framework.ReferenceResolvingExecutor(executor)
-
-  channel_grid = channels.ChannelGrid({
-      (tff.CLIENTS, placement.PAILLIER): channels.StubChannel(),
-      (tff.CLIENTS, tff.SERVER): channels.StubChannel(),
-      (placement.PAILLIER, tff.SERVER): channels.StubChannel()})
-
-  def intrinsic_strategy_fn(executor):
-    return strategy.PaillierStrategy(executor, channel_grid)
-
-  return tff.framework.FederatingExecutor({
-      tff.SERVER: create_bottom_stack(),
-      tff.CLIENTS: [create_bottom_stack() for _ in range(number_of_clients)],
-      None: create_bottom_stack()},
-      intrinsic_strategy_fn=intrinsic_strategy_fn)
-
-
 def make_integer_secure_sum(input_shape):
   if input_shape is None:
     member_type = tf.int32
@@ -64,8 +43,8 @@ class PaillierStrategyTest(parameterized.TestCase):
     self.assertAlmostEqual(result, 15.0)
 
   @parameterized.named_parameters(
-      (('rank_{}'.format(i), [2] * i) for i in range(1, 6)))
-  def test_federated_secure_sum_input_shapes(self, input_shape):
+      (('rank{}'.format(i), [2] * i) for i in range(1, 6)))
+  def test_secure_sum_inputs(self, input_shape):
     input_tensor = np.ones(input_shape, dtype=np.int32)
     NUM_CLIENTS = 5
     expected = input_tensor * NUM_CLIENTS
@@ -84,7 +63,7 @@ class PaillierStrategyTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ('{}x{}'.format(r, c), r, c) for r, c in [(1, 1), (2, 2), (5, 5), (10, 10)])
-  def test_secure_sum_larger_values(self, first_dim, second_dim):
+  def test_secure_sum_larger_matrices(self, first_dim, second_dim):
     NUM_CLIENTS = 5
     shape = (first_dim, second_dim)
     input_tensor = np.ones(shape, dtype=np.int32)
