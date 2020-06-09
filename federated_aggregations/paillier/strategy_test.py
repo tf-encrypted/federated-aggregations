@@ -64,7 +64,7 @@ class PaillierStrategyTest(parameterized.TestCase):
     self.assertAlmostEqual(result, 15.0)
 
   @parameterized.named_parameters(
-      (('rank_{}'.format(i), [i] * i) for i in range(1, 6)))
+      (('rank_{}'.format(i), [2] * i) for i in range(1, 6)))
   def test_federated_secure_sum_input_shapes(self, input_shape):
     input_tensor = np.ones(input_shape, dtype=np.int32)
     NUM_CLIENTS = 5
