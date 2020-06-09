@@ -1,6 +1,5 @@
 import tensorflow as tf
 import tensorflow_federated as tff
-import tf_big
 from tf_encrypted.primitives import paillier
 
 
@@ -32,8 +31,7 @@ def make_decryptor(
   def _decrypt(decryption_key_raw, encryption_key_raw, ciphertext_raw):
     dk = paillier.DecryptionKey(*decryption_key_raw)
     ek = paillier.EncryptionKey(encryption_key_raw)
-    c = tf_big.convert_to_tensor(ciphertext_raw)
-    ciphertext = paillier.Ciphertext(ek, c)
+    ciphertext = paillier.Ciphertext(ek, ciphertext_raw)
     return paillier.decrypt(dk, ciphertext, dtype)
 
   return _decrypt
