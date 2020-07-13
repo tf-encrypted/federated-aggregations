@@ -2,7 +2,7 @@ import collections
 
 import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import py_typecheck
-from tensorflow_federated.python.core.impl.executors import federating_executor
+from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 from tensorflow_federated.python.core.impl.types import placement_literals
 
 
@@ -36,6 +36,7 @@ class KeyStore:
       key_owner_cache['sk'] = secret_key
 
   def _check_key_type(self, key):
-    py_typecheck.check_type(key, federating_executor.FederatingExecutorValue)
+    py_typecheck.check_type(key,
+        federated_resolving_strategy.FederatedResolvingStrategyValue)
     py_typecheck.check_type(key.type_signature,
         (tff.NamedTupleType, tff.FederatedType))

@@ -30,7 +30,7 @@ def make_integer_secure_sum(input_shape):
   return secure_paillier_addition
 
 
-class PaillierStrategyTest(parameterized.TestCase):
+class PaillierAggregatingStrategyTest(parameterized.TestCase):
   @parameterized.named_parameters(
       ('paillier_executor_factory_none_clients',
       factory.local_paillier_executor_factory()),
