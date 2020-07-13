@@ -6,7 +6,7 @@ import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computations
-from tensorflow_federated.python.core.impl.executors import federating_executor
+from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 from tensorflow_federated.python.core.impl.types import placement_literals
 from tensorflow_federated.python.core.impl.types import type_analysis
 from tensorflow_federated.python.core.impl.types import type_conversions
@@ -62,13 +62,13 @@ class BaseChannel(Channel):
             itertools.repeat(message_type))
         member_type = message_type
         all_equal = True
-      message_value = federating_executor.FederatingExecutorValue(
+      message_value = federated_resolving_strategy.FederatedResolvingStrategyValue(
         await asyncio.gather(*[c.create_value(m, t) for c, m, t in iterator]),
         tff.FederatedType(member_type, receiver_placement, all_equal))
     else:
       rcv_child = rcv_children[0]
       if isinstance(message_type, tff.NamedTupleType):
-        message_value = federating_executor.FederatingExecutorValue(
+        message_value = federated_resolving_strategy.FederatedResolvingStrategyValue(
           anonymous_tuple.from_container(
               await asyncio.gather(*[
                   rcv_child.create_value(m, t)
@@ -77,7 +77,7 @@ class BaseChannel(Channel):
               tff.FederatedType(mt, receiver_placement, True)
               for mt in message_type]))
       else:
-        message_value = federating_executor.FederatingExecutorValue(
+        message_value = federated_resolving_strategy.FederatedResolvingStrategyValue(
           await rcv_child.create_value(message, message_type),
           tff.FederatedType(message_type, receiver_placement,
               value.type_signature.all_equal))
@@ -184,7 +184,7 @@ class EasyBoxChannel(BaseChannel):
     encrypted_values = await asyncio.gather(*[
         snd_child.create_call(encryptor_fn, arg) for arg in encryptor_args])
     encrypted_value_types = [encryptor_type.result] * len(encrypted_values)
-    return federating_executor.FederatingExecutorValue(
+    return federated_resolving_strategy.FederatedResolvingStrategyValue(
         anonymous_tuple.from_container(encrypted_values),
         tff.NamedTupleType([tff.FederatedType(evt, sender, all_equal=False)
             for evt in encrypted_value_types]))
@@ -239,7 +239,7 @@ class EasyBoxChannel(BaseChannel):
         snd_child.create_call(encryptor, arg)
         for encryptor, arg, snd_child in zip(
             encryptor_fns, encryptor_args, snd_children)]
-    return federating_executor.FederatingExecutorValue(
+    return federated_resolving_strategy.FederatedResolvingStrategyValue(
         await asyncio.gather(*encrypted_values),
         tff.FederatedType(encryptor_type.result, sender,
             all_equal=val.type_signature.all_equal))
@@ -290,7 +290,7 @@ class EasyBoxChannel(BaseChannel):
         rcv_child.create_call(decryptor, arg)
         for decryptor, arg, rcv_child in zip(
             decryptor_fns, decryptor_args, rcv_children)]
-    return federating_executor.FederatingExecutorValue(
+    return federated_resolving_strategy.FederatedResolvingStrategyValue(
         await asyncio.gather(*decrypted_values),
         tff.FederatedType(decryptor_type.result, receiver,
             all_equal=val.type_signature.all_equal))
@@ -341,7 +341,7 @@ class EasyBoxChannel(BaseChannel):
         rcv_child.create_call(decryptor_fn, arg)
         for arg in decryptor_args])
     decrypted_value_types = [decryptor_type.result] * len(decrypted_values)
-    return federating_executor.FederatingExecutorValue(
+    return federated_resolving_strategy.FederatedResolvingStrategyValue(
         anonymous_tuple.from_container(decrypted_values),
         tff.NamedTupleType([
             tff.FederatedType(dvt, receiver, all_equal=True)
@@ -371,9 +371,9 @@ class EasyBoxChannel(BaseChannel):
     sk_type = sk_vals[0].type_signature
     # all_equal whenever owner is non-CLIENTS singleton placement
     val_all_equal = len(executors) == 1 and key_owner != tff.CLIENTS
-    pk_fed_val = federating_executor.FederatingExecutorValue(
+    pk_fed_val = federated_resolving_strategy.FederatedResolvingStrategyValue(
         pk_vals, tff.FederatedType(pk_type, key_owner, val_all_equal))
-    sk_fed_val = federating_executor.FederatingExecutorValue(
+    sk_fed_val = federated_resolving_strategy.FederatedResolvingStrategyValue(
         sk_vals, tff.FederatedType(sk_type, key_owner, val_all_equal))
     self.key_references.update_keys(
         key_owner, public_key=pk_fed_val, secret_key=sk_fed_val)
@@ -396,7 +396,7 @@ class EasyBoxChannel(BaseChannel):
       # val is a single tensor
       vals = [c.create_value(val, key_type) for c in children]
       vals_type = tff.FederatedType(key_type, key_receiver, all_equal=True)
-    public_key_rcv = federating_executor.FederatingExecutorValue(
+    public_key_rcv = federated_resolving_strategy.FederatedResolvingStrategyValue(
         await asyncio.gather(*vals), vals_type)
     self.key_references.update_keys(key_owner, public_key=public_key_rcv)
 
@@ -408,7 +408,7 @@ def _get_other_placement(this_placement, both_placements):
 
 
 def _check_value_placement(arg, placements):
-  py_typecheck.check_type(arg, federating_executor.FederatingExecutorValue)
+  py_typecheck.check_type(arg, federated_resolving_strategy.FederatedResolvingStrategyValue)
   py_typecheck.check_type(arg.type_signature, (tff.FederatedType, tff.NamedTupleType))
   value_type = arg.type_signature
   sender_placement = arg.type_signature.placement

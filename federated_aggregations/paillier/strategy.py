@@ -5,7 +5,7 @@ import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computation_types
-from tensorflow_federated.python.core.impl.executors import federating_executor
+from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 from tensorflow_federated.python.core.impl.types import placement_literals
 from tensorflow_federated.python.core.impl.types import type_analysis
 from tensorflow_federated.python.core.impl.types import type_conversions
@@ -16,11 +16,14 @@ from federated_aggregations.paillier import placement as paillier_placement
 from federated_aggregations.paillier import computations as paillier_comp
 
 
-# TODO: change superclass to tff.framework.DefaultFederatingStrategy 
-#       when the FederatingStrategy change lands on master
-class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
-  def __init__(self, parent_executor, channel_grid, key_inputter):
-    super().__init__(parent_executor)
+class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
+  @classmethod
+  def factory(cls, target_executors, channel_grid, key_inputter):
+    return lambda executor: cls(executor, target_executors, channel_grid, key_inputter)
+
+  def __init__(self, executor, target_executors, channel_grid, key_inputter):
+    super().__init__(executor, target_executors)
+    self._check_for_paillier_placement()
     self.channel_grid = channel_grid
     self._requires_setup = True  # lazy key setup
     self._key_inputter = key_inputter
@@ -29,25 +32,21 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     self._paillier_decryptor_cache = {}
     self._reshape_function_cache = {}
 
-  @classmethod
-  def validate_executor_placements(cls, executor_placements):
-    py_typecheck.check_type(executor_placements, dict)
-    for k, v in executor_placements.items():
-      if k is not None:
-        py_typecheck.check_type(k, placement_literals.PlacementLiteral)
-      py_typecheck.check_type(v, (list, tff.framework.Executor))
-      if isinstance(v, list):
-        for e in v:
-          py_typecheck.check_type(e, tff.framework.Executor)
-      for pl in [None, tff.SERVER, paillier_placement.PAILLIER]:
-        if pl in executor_placements:
-          ex = executor_placements[pl]
-          if isinstance(ex, list):
-            pl_cardinality = len(ex)
-            if pl_cardinality != 1:
-              raise ValueError(
-                  'Unsupported cardinality for placement "{}": {}.'.format(
-                      pl, pl_cardinality))
+  def _get_child_executors(self, placement, index=None):
+    child_executors = self._target_executors[placement]
+    if index is not None:
+      return child_executors[index]
+    return child_executors
+
+  def _check_for_paillier_placement(self):
+    if paillier_placement.PAILLIER not in self._target_executors:
+      raise ValueError('Missing Paillier aggregator placement.')
+    paillier_executor = self._target_executors[paillier_placement.PAILLIER]
+    paillier_cardinality = len(paillier_executor)
+    if paillier_cardinality != 1:
+      raise ValueError(
+          'Unsupported cardinality for Paillier aggregator placement {}: '
+          '{}.'.format(paillier_placement.PAILLIER, paillier_cardinality))
   
   async def _move(self, value, source_placement, target_placement):
     await self.channel_grid.setup_channels(self)
@@ -56,14 +55,14 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
 
   async def _paillier_setup(self):
     # Load paillier keys on server
-    key_inputter = await self.executor.create_value(self._key_inputter)
+    key_inputter = await self._executor.create_value(self._key_inputter)
     _check_key_inputter(key_inputter)
     fed_output = await self._eval(key_inputter, tff.SERVER, all_equal=True)
     output = fed_output.internal_representation[0]
     # Broadcast encryption key to all placements
     server_executor = self._get_child_executors(tff.SERVER, index=0)
     ek_ref = await server_executor.create_selection(output, index=0)
-    ek = federating_executor.FederatingExecutorValue(ek_ref,
+    ek = federated_resolving_strategy.FederatedResolvingStrategyValue(ek_ref,
         tff.FederatedType(ek_ref.type_signature, tff.SERVER, True))
     placed = await asyncio.gather(
       self._move(ek, tff.SERVER, tff.CLIENTS),
@@ -73,10 +72,10 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     self.encryption_key_paillier = placed[1]
     # Keep decryption key on server with formal placement
     dk_ref = await server_executor.create_selection(output, index=1)
-    self.decryption_key = federating_executor.FederatingExecutorValue(dk_ref,
+    self.decryption_key = federated_resolving_strategy.FederatedResolvingStrategyValue(dk_ref,
         tff.FederatedType(dk_ref.type_signature, tff.SERVER, all_equal=True))
 
-  async def federated_secure_sum(self, arg):
+  async def compute_federated_secure_sum(self, arg):
     self._check_arg_is_anonymous_tuple(arg)
     py_typecheck.check_len(arg.internal_representation, 2)
     value_type = arg.type_signature[0]
@@ -92,10 +91,10 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     input_tensor_shape = value_type.member.shape
     if len(input_tensor_shape) != 2:
       clients_value = await self._compute_reshape_on_tensor(
-          await self.executor.create_selection(arg, index=0),
+          await self._executor.create_selection(arg, index=0),
           output_shape=[1, input_tensor_shape.num_elements()])
     else:
-      clients_value = await self.executor.create_selection(arg, index=0)
+      clients_value = await self._executor.create_selection(arg, index=0)
     # Encrypt summands on tff.CLIENTS
     encrypted_values = await self._compute_paillier_encryption(
         self.encryption_key_clients, clients_value)
@@ -116,8 +115,8 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         decrypted_result, output_shape=input_tensor_shape.as_list())
 
   async def _compute_paillier_encryption(self,
-      client_encryption_keys: federating_executor.FederatingExecutorValue,
-      clients_value: federating_executor.FederatingExecutorValue):
+      client_encryption_keys: federated_resolving_strategy.FederatedResolvingStrategyValue,
+      clients_value: federated_resolving_strategy.FederatedResolvingStrategyValue):
     client_children = self._get_child_executors(tff.CLIENTS)
     num_clients = len(client_children)
     py_typecheck.check_len(client_encryption_keys.internal_representation,
@@ -140,13 +139,13 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
     encrypted_values = await asyncio.gather(*[
       c.create_call(fn, arg) for c, fn, arg in zip(
           client_children, encryptor_fns, encryptor_args)])
-    return federating_executor.FederatingExecutorValue(encrypted_values,
+    return federated_resolving_strategy.FederatedResolvingStrategyValue(encrypted_values,
         tff.FederatedType(encryptor_type.result, tff.CLIENTS,
             clients_value.type_signature.all_equal))
 
   async def _compute_paillier_sum(self,
-      encryption_key: federating_executor.FederatingExecutorValue,
-      values: federating_executor.FederatingExecutorValue):
+      encryption_key: federated_resolving_strategy.FederatedResolvingStrategyValue,
+      values: federated_resolving_strategy.FederatedResolvingStrategyValue):
     paillier_child = self._get_child_executors(
         paillier_placement.PAILLIER, index=0)
     sum_proto, sum_type = utils.lift_to_computation_spec(
@@ -160,13 +159,13 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         await paillier_child.create_tuple(values.internal_representation)))
     sum_fn, sum_arg = await asyncio.gather(sum_fn, sum_arg)
     encrypted_sum = await paillier_child.create_call(sum_fn, sum_arg)
-    return federating_executor.FederatingExecutorValue(encrypted_sum,
+    return federated_resolving_strategy.FederatedResolvingStrategyValue(encrypted_sum,
         tff.FederatedType(sum_type.result, paillier_placement.PAILLIER, True))
 
   async def _compute_paillier_decryption(self,
-      decryption_key: federating_executor.FederatingExecutorValue,
-      encryption_key: federating_executor.FederatingExecutorValue,
-      value: federating_executor.FederatingExecutorValue,
+      decryption_key: federated_resolving_strategy.FederatedResolvingStrategyValue,
+      encryption_key: federated_resolving_strategy.FederatedResolvingStrategyValue,
+      value: federated_resolving_strategy.FederatedResolvingStrategyValue,
       export_dtype):
     server_child = self._get_child_executors(tff.SERVER, index=0)
     decryptor_arg_spec = (decryption_key.type_signature.member,
@@ -184,7 +183,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         value.internal_representation))
     decryptor_fn, decryptor_arg = await asyncio.gather(decryptor_fn, decryptor_arg)
     decrypted_value = await server_child.create_call(decryptor_fn, decryptor_arg)
-    return federating_executor.FederatingExecutorValue([decrypted_value],
+    return federated_resolving_strategy.FederatedResolvingStrategyValue([decrypted_value],
         tff.FederatedType(decryptor_type.result, tff.SERVER, True))
 
   async def _compute_reshape_on_tensor(self, tensor, output_shape):
@@ -207,7 +206,7 @@ class PaillierStrategy(federating_executor.CentralizedIntrinsicStrategy):
         tff.TensorType(tensor_type.dtype, output_shape),
         tensor_placement,
         tensor.type_signature.all_equal)
-    return federating_executor.FederatingExecutorValue(
+    return federated_resolving_strategy.FederatedResolvingStrategyValue(
         reshaped_tensors, output_tensor_spec)
 
 

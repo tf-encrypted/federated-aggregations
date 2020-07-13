@@ -7,7 +7,7 @@ import asyncio
 import tensorflow as tf
 import tensorflow_federated as tff
 from tensorflow_federated.python.common_libs import anonymous_tuple
-from tensorflow_federated.python.core.impl.executors import federating_executor
+from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 from tensorflow_federated.python.core.impl.types import placement_literals
 from tensorflow_federated.python.core.impl.types import type_conversions
 
@@ -35,7 +35,8 @@ class PlaintextChannelTest(utils.AsyncTestCase):
     result = self.run_sync(transferred.compute())
 
     expected_type = type_conversions.infer_type(expected)
-    assert isinstance(transferred, federating_executor.FederatingExecutorValue)
+    assert isinstance(transferred,
+        federated_resolving_strategy.FederatedResolvingStrategyValue)
     if isinstance(expected, list):
       assert isinstance(transferred.type_signature, tff.NamedTupleType)
       for i, elt_type_spec in enumerate(transferred.type_signature):
