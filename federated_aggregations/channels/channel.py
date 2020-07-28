@@ -321,7 +321,7 @@ class EasyBoxChannel(BaseChannel):
     #   each input_type is a tuple needed for one value to be decrypted
     py_typecheck.check_type(input_type, tff.NamedTupleType)
     py_typecheck.check_type(pk_snd_type, tff.NamedTupleType)
-    py_typecheck.check_len(input_type, len(pk_snd_type))
+    py_typecheck.check_len(val.type_signature, len(pk_snd_type))
     input_element_type = input_type
     pk_element_type = pk_snd_type[0]
     decryptor_arg_spec = (input_element_type, pk_element_type, sk_rcv_type)
