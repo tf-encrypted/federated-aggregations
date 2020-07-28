@@ -18,14 +18,6 @@ from federated_aggregations.paillier import strategy as paillier_strategy
 from federated_aggregations.paillier import computations as paillier_comp
 
 
-# separation of setup & sending -- setup phase only needs to happen once
-#
-# pass dict with metadata describing keys (optional metadata)
-# Channel.setup uses this metadata to either load/generate keys via TF ops
-# start with None: generate, eventually allow key metadata: load
-#
-# setup includes both generating/loading key pairs & exchanging the key pairs
-
 # TODO: add more factory functions, including:
 #   - composite executory factory
 #   - worker pool factory (for use with RemoteExecutor)
@@ -86,9 +78,7 @@ class PaillierAggregatingExecutorFactory(executor_stacks.FederatingExecutorFacto
     # Set up secure channel between clients & Paillier executor
     secure_channel_grid = channels.ChannelGrid({
       (tff.CLIENTS,
-      # TODO: replace this line with the one after it
-       paillier_placement.PAILLIER): channels.PlaintextChannel,
-      #  paillier_placement.PAILLIER): channels.EasyBoxChannel,
+       paillier_placement.PAILLIER): channels.EasyBoxChannel,
       (tff.CLIENTS, 
        tff.SERVER): channels.PlaintextChannel,
       (paillier_placement.PAILLIER, 
