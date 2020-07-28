@@ -24,7 +24,7 @@ class PlaintextChannelTest(utils.AsyncTestCase):
           tf.constant(2.0, dtype=tf.float32)))
   def test_transfer(self, value, source_placement, target_placement, expected):
     fed_ex = utils.create_test_executor(channel=ch.PlaintextChannel)
-    strategy = fed_ex.intrinsic_strategy
+    strategy = fed_ex._strategy
     channel_grid = strategy.channel_grid
     self.run_sync(channel_grid.setup_channels(strategy))
 
@@ -52,7 +52,7 @@ class PlaintextChannelTest(utils.AsyncTestCase):
 class EasyBoxChannelTest(utils.AsyncTestCase):
   def test_generate_aggregator_keys(self):
     fed_ex = utils.create_test_executor()
-    strategy = fed_ex.intrinsic_strategy
+    strategy = fed_ex._strategy
     channel_grid = strategy.channel_grid
     self.run_sync(channel_grid.setup_channels(strategy))
     
@@ -72,9 +72,9 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
           tf.constant(2.0, dtype=tf.float32)))
   def test_transfer(self, value, source_placement, target_placement, expected):
     fed_ex = utils.create_test_executor()
-    strategy = fed_ex.intrinsic_strategy
+    strategy = fed_ex._strategy
     channel_grid = strategy.channel_grid
-    self.run_sync(channel_grid.setup_channels(fed_ex.intrinsic_strategy))
+    self.run_sync(channel_grid.setup_channels(fed_ex._strategy))
 
     channel = channel_grid[(placement_literals.CLIENTS,
                             placement_literals.SERVER)]
