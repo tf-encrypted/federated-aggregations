@@ -108,7 +108,7 @@ class PaillierAggregatingExecutorFactory(executor_stacks.FederatingExecutorFacto
         channel_grid=secure_channel_grid,
         # NOTE: we let the server generate it's own key here, but for proper
         # deployment we would want to supply a key verified by proper PKI
-        key_inputter=paillier_comp.make_keygen(bitlength=2048))
+        key_inputter=paillier_comp.make_keygen(modulus_bitlength=2048))
     unplaced_executor = self._unplaced_executor_factory.create_executor(
         cardinalities={})
     executor = federating_executor.FederatingExecutor(

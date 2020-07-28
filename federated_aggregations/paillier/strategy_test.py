@@ -70,8 +70,8 @@ class PaillierAggregatingStrategyTest(parameterized.TestCase):
     member_type = tff.TensorType(tf.int32, shape)
     @tff.federated_computation(tff.FederatedType(member_type, tff.CLIENTS))
     def secure_paillier_addition(x):
-      bitwidth = 8  # assume upper-bound of 2^8 on summation result
-      return tff.federated_secure_sum(x, bitwidth)
+      return tff.federated_secure_sum(x, 64)
+
     with _install_executor(factory.local_paillier_executor_factory()):
       result = secure_paillier_addition([input_tensor] * NUM_CLIENTS)
     expected = input_tensor * NUM_CLIENTS

@@ -175,7 +175,7 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
         paillier_comp.make_decryptor,
         self._paillier_decryptor_cache,
         arg_spec=decryptor_arg_spec,
-        dtype=export_dtype)
+        export_dtype=export_dtype)
     decryptor_fn = server_child.create_value(decryptor_proto, decryptor_type)
     decryptor_arg = server_child.create_tuple((
         decryption_key.internal_representation,
