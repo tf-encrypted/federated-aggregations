@@ -38,7 +38,7 @@ class PlaintextChannelTest(utils.AsyncTestCase):
     assert isinstance(transferred,
         federated_resolving_strategy.FederatedResolvingStrategyValue)
     if isinstance(expected, list):
-      assert isinstance(transferred.type_signature, tff.NamedTupleType)
+      assert isinstance(transferred.type_signature, tff.StructType)
       for i, elt_type_spec in enumerate(transferred.type_signature):
         self.assertEqual(elt_type_spec,
             tff.FederatedType(expected_type[i], target_placement, True))

@@ -53,7 +53,7 @@ class ExecutorMock(mock.MagicMock, tff.framework.Executor):
   def create_selection(self, *args):
     pass
 
-  def create_tuple(self, *args):
+  def create_struct(self, *args):
     pass
 
   def close(self, *args):
