@@ -7,10 +7,7 @@ import tensorflow as tf
 import tensorflow_federated as tff
 from tensorflow_federated.python.core.impl.executors import execution_context
 
-from federated_aggregations import channels
 from federated_aggregations.paillier import factory
-from federated_aggregations.paillier import placement
-from federated_aggregations.paillier import strategy
 
 
 def _install_executor(executor_factory_instance):

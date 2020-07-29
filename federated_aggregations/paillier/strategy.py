@@ -39,14 +39,14 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
     return child_executors
 
   def _check_for_paillier_placement(self):
-    if paillier_placement.PAILLIER not in self._target_executors:
+    if paillier_placement.AGGREGATOR not in self._target_executors:
       raise ValueError('Missing Paillier aggregator placement.')
-    paillier_executor = self._target_executors[paillier_placement.PAILLIER]
+    paillier_executor = self._target_executors[paillier_placement.AGGREGATOR]
     paillier_cardinality = len(paillier_executor)
     if paillier_cardinality != 1:
       raise ValueError(
           'Unsupported cardinality for Paillier aggregator placement {}: '
-          '{}.'.format(paillier_placement.PAILLIER, paillier_cardinality))
+          '{}.'.format(paillier_placement.AGGREGATOR, paillier_cardinality))
   
   async def _move(self, value, source_placement, target_placement):
     await self.channel_grid.setup_channels(self)
@@ -66,7 +66,7 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
         tff.FederatedType(ek_ref.type_signature, tff.SERVER, True))
     placed = await asyncio.gather(
       self._move(ek, tff.SERVER, tff.CLIENTS),
-      self._move(ek, tff.SERVER, paillier_placement.PAILLIER))
+      self._move(ek, tff.SERVER, paillier_placement.AGGREGATOR))
     self.encryption_key_server = ek
     self.encryption_key_clients = placed[0]
     self.encryption_key_paillier = placed[1]
@@ -100,12 +100,12 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
         self.encryption_key_clients, clients_value)
     # Perform Paillier sum on ciphertexts
     encrypted_values = await self._move(encrypted_values,
-        tff.CLIENTS, paillier_placement.PAILLIER)
+        tff.CLIENTS, paillier_placement.AGGREGATOR)
     encrypted_sum = await self._compute_paillier_sum(
         self.encryption_key_paillier, encrypted_values)
     # Move to server and decrypt the result
     encrypted_sum = await self._move(encrypted_sum,
-        paillier_placement.PAILLIER, tff.SERVER)
+        paillier_placement.AGGREGATOR, tff.SERVER)
     decrypted_result = await self._compute_paillier_decryption(
         self.decryption_key,
         self.encryption_key_server,
@@ -147,7 +147,7 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
       encryption_key: federated_resolving_strategy.FederatedResolvingStrategyValue,
       values: federated_resolving_strategy.FederatedResolvingStrategyValue):
     paillier_child = self._get_child_executors(
-        paillier_placement.PAILLIER, index=0)
+        paillier_placement.AGGREGATOR, index=0)
     sum_proto, sum_type = utils.lift_to_computation_spec(
         self._paillier_sequence_sum,
         input_arg_type=tff.StructType((
@@ -160,7 +160,7 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
     sum_fn, sum_arg = await asyncio.gather(sum_fn, sum_arg)
     encrypted_sum = await paillier_child.create_call(sum_fn, sum_arg)
     return federated_resolving_strategy.FederatedResolvingStrategyValue(encrypted_sum,
-        tff.FederatedType(sum_type.result, paillier_placement.PAILLIER, True))
+        tff.FederatedType(sum_type.result, paillier_placement.AGGREGATOR, True))
 
   async def _compute_paillier_decryption(self,
       decryption_key: federated_resolving_strategy.FederatedResolvingStrategyValue,
