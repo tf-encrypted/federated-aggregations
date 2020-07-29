@@ -8,8 +8,8 @@ import setuptools
 
 DOCLINES = __doc__.split('\n')
 REQUIRED_PACKAGES = [
-    'tensorflow-federated>=0.14.0',
-    'tf-encrypted-primitives>=0.0.1',
+    'tensorflow-federated>=0.16.0',
+    'tf-encrypted-primitives>=0.1.0',
 ]
 
 with open('federated_aggregations/version.py') as fp:
