@@ -6,7 +6,7 @@ from absl.testing import parameterized
 import asyncio
 import tensorflow as tf
 import tensorflow_federated as tff
-from tensorflow_federated.python.common_libs import anonymous_tuple
+from tensorflow_federated.python.common_libs import structure
 from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 from tensorflow_federated.python.core.impl.types import placement_literals
 from tensorflow_federated.python.core.impl.types import type_conversions
@@ -42,7 +42,7 @@ class PlaintextChannelTest(utils.AsyncTestCase):
       for i, elt_type_spec in enumerate(transferred.type_signature):
         self.assertEqual(elt_type_spec,
             tff.FederatedType(expected_type[i], target_placement, True))
-      result = anonymous_tuple.flatten(result)
+      result = structure.flatten(result)
     else:
       self.assertEqual(transferred.type_signature,
           tff.FederatedType(expected_type, target_placement, True))
@@ -84,7 +84,7 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
     decrypted = self.run_sync(transferred.compute())
 
     if isinstance(expected, list):
-      decrypted = anonymous_tuple.flatten(decrypted)
+      decrypted = structure.flatten(decrypted)
       self.assertEqual(decrypted, expected)
     else:
       for d in decrypted:

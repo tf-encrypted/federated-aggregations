@@ -2,7 +2,6 @@ import asyncio
 from collections import OrderedDict
 
 import tensorflow_federated as tff
-from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computation_types
 from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
@@ -76,7 +75,7 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
         tff.FederatedType(dk_ref.type_signature, tff.SERVER, all_equal=True))
 
   async def compute_federated_secure_sum(self, arg):
-    self._check_arg_is_anonymous_tuple(arg)
+    self._check_arg_is_structure(arg)
     py_typecheck.check_len(arg.internal_representation, 2)
     value_type = arg.type_signature[0]
     type_analysis.check_federated_type(value_type, placement=tff.CLIENTS)

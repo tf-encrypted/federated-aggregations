@@ -3,8 +3,8 @@ import asyncio
 import itertools
 
 import tensorflow_federated as tff
-from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
+from tensorflow_federated.python.common_libs import structure
 from tensorflow_federated.python.core.api import computations
 from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 from tensorflow_federated.python.core.impl.types import placement_literals
@@ -69,7 +69,7 @@ class BaseChannel(Channel):
       rcv_child = rcv_children[0]
       if isinstance(message_type, tff.StructType):
         message_value = federated_resolving_strategy.FederatedResolvingStrategyValue(
-          anonymous_tuple.from_container(
+          structure.from_container(
               await asyncio.gather(*[
                   rcv_child.create_value(m, t)
                   for m, t in zip(message, message_type)])),
@@ -185,7 +185,7 @@ class EasyBoxChannel(BaseChannel):
         snd_child.create_call(encryptor_fn, arg) for arg in encryptor_args])
     encrypted_value_types = [encryptor_type.result] * len(encrypted_values)
     return federated_resolving_strategy.FederatedResolvingStrategyValue(
-        anonymous_tuple.from_container(encrypted_values),
+        structure.from_container(encrypted_values),
         tff.StructType([tff.FederatedType(evt, sender, all_equal=False)
             for evt in encrypted_value_types]))
 
@@ -342,7 +342,7 @@ class EasyBoxChannel(BaseChannel):
         for arg in decryptor_args])
     decrypted_value_types = [decryptor_type.result] * len(decrypted_values)
     return federated_resolving_strategy.FederatedResolvingStrategyValue(
-        anonymous_tuple.from_container(decrypted_values),
+        structure.from_container(decrypted_values),
         tff.StructType([
             tff.FederatedType(dvt, receiver, all_equal=True)
             for dvt in decrypted_value_types]))
