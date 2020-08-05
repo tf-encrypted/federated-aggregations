@@ -18,14 +18,6 @@ from federated_aggregations.paillier import strategy as paillier_strategy
 from federated_aggregations.paillier import computations as paillier_comp
 
 
-# separation of setup & sending -- setup phase only needs to happen once
-#
-# pass dict with metadata describing keys (optional metadata)
-# Channel.setup uses this metadata to either load/generate keys via TF ops
-# start with None: generate, eventually allow key metadata: load
-#
-# setup includes both generating/loading key pairs & exchanging the key pairs
-
 # TODO: add more factory functions, including:
 #   - composite executory factory
 #   - worker pool factory (for use with RemoteExecutor)
@@ -55,7 +47,7 @@ class AggregatingUnplacedExecutorFactory(executor_stacks.UnplacedExecutorFactory
       raise ValueError(
           'Unplaced executors cannot accept nonempty cardinalities as '
           'arguments. Received cardinalities: {}.'.format(cardinalities))
-    if placement == paillier_placement.PAILLIER:
+    if placement == paillier_placement.AGGREGATOR:
       ex = eager_tf_executor.EagerTFExecutor(device=self._aggregator_device)
       return executor_stacks._wrap_executor_in_threading_stack(ex)
     return super().create_executor(
@@ -80,18 +72,16 @@ class PaillierAggregatingExecutorFactory(executor_stacks.FederatingExecutorFacto
       ]
       self._sizing_executors.extend(client_stacks)
     paillier_stack = self._unplaced_executor_factory.create_executor(
-        cardinalities={}, placement=paillier_placement.PAILLIER)
+        cardinalities={}, placement=paillier_placement.AGGREGATOR)
     if self._use_sizing:
       paillier_stack = sizing_executor.SizingExecutor(paillier_stack)
     # Set up secure channel between clients & Paillier executor
     secure_channel_grid = channels.ChannelGrid({
       (tff.CLIENTS,
-      # TODO: replace this line with the one after it
-       paillier_placement.PAILLIER): channels.PlaintextChannel,
-      #  paillier_placement.PAILLIER): channels.EasyBoxChannel,
+       paillier_placement.AGGREGATOR): channels.EasyBoxChannel,
       (tff.CLIENTS, 
        tff.SERVER): channels.PlaintextChannel,
-      (paillier_placement.PAILLIER, 
+      (paillier_placement.AGGREGATOR, 
        tff.SERVER): channels.PlaintextChannel})
     # Build a FederatingStrategy factory for Paillier aggregation with the secure channel setup
     strategy_factory = paillier_strategy.PaillierAggregatingStrategy.factory(
@@ -103,12 +93,12 @@ class PaillierAggregatingExecutorFactory(executor_stacks.FederatingExecutorFacto
             placement_literals.SERVER:
                 self._unplaced_executor_factory.create_executor(
                     cardinalities={}, placement=placement_literals.SERVER),
-            paillier_placement.PAILLIER: paillier_stack,
+            paillier_placement.AGGREGATOR: paillier_stack,
         },
         channel_grid=secure_channel_grid,
         # NOTE: we let the server generate it's own key here, but for proper
         # deployment we would want to supply a key verified by proper PKI
-        key_inputter=paillier_comp.make_keygen(bitlength=2048))
+        key_inputter=paillier_comp.make_keygen(modulus_bitlength=2048))
     unplaced_executor = self._unplaced_executor_factory.create_executor(
         cardinalities={})
     executor = federating_executor.FederatingExecutor(

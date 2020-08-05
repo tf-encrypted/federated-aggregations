@@ -3,8 +3,8 @@ import asyncio
 import itertools
 
 import tensorflow_federated as tff
-from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
+from tensorflow_federated.python.common_libs import structure
 from tensorflow_federated.python.core.api import computations
 from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 from tensorflow_federated.python.core.impl.types import placement_literals
@@ -52,7 +52,7 @@ class BaseChannel(Channel):
     message = await sent.compute()
     message_type = type_conversions.infer_type(message)
     if receiver_placement is tff.CLIENTS:
-      if isinstance(message_type, tff.NamedTupleType):
+      if isinstance(message_type, tff.StructType):
         iterator = zip(rcv_children, message, message_type)
         member_type = message_type[0]
         all_equal = False
@@ -67,13 +67,13 @@ class BaseChannel(Channel):
         tff.FederatedType(member_type, receiver_placement, all_equal))
     else:
       rcv_child = rcv_children[0]
-      if isinstance(message_type, tff.NamedTupleType):
+      if isinstance(message_type, tff.StructType):
         message_value = federated_resolving_strategy.FederatedResolvingStrategyValue(
-          anonymous_tuple.from_container(
+          structure.from_container(
               await asyncio.gather(*[
                   rcv_child.create_value(m, t)
                   for m, t in zip(message, message_type)])),
-          tff.NamedTupleType([
+          tff.StructType([
               tff.FederatedType(mt, receiver_placement, True)
               for mt in message_type]))
       else:
@@ -160,7 +160,7 @@ class EasyBoxChannel(BaseChannel):
     type_analysis.check_federated_type(val.type_signature, placement=sender)
     py_typecheck.check_len(val.internal_representation, 1)
     py_typecheck.check_type(pk_receiver.type_signature.member,
-        tff.NamedTupleType)
+        tff.StructType)
     py_typecheck.check_len(pk_receiver.internal_representation,
         len(rcv_children))
     py_typecheck.check_len(sk_sender.internal_representation, 1)
@@ -179,14 +179,14 @@ class EasyBoxChannel(BaseChannel):
     ### Encrypt values and return them
     encryptor_fn = await snd_child.create_value(encryptor_proto, encryptor_type)
     encryptor_args = await asyncio.gather(*[
-        snd_child.create_tuple([v, this_pk, sk])
+        snd_child.create_struct([v, this_pk, sk])
         for this_pk in pk_receiver.internal_representation])
     encrypted_values = await asyncio.gather(*[
         snd_child.create_call(encryptor_fn, arg) for arg in encryptor_args])
     encrypted_value_types = [encryptor_type.result] * len(encrypted_values)
     return federated_resolving_strategy.FederatedResolvingStrategyValue(
-        anonymous_tuple.from_container(encrypted_values),
-        tff.NamedTupleType([tff.FederatedType(evt, sender, all_equal=False)
+        structure.from_container(encrypted_values),
+        tff.StructType([tff.FederatedType(evt, sender, all_equal=False)
             for evt in encrypted_value_types]))
 
   async def _encrypt_values_on_clients(self, val, sender, receiver):
@@ -230,7 +230,7 @@ class EasyBoxChannel(BaseChannel):
         snd_child.create_value(encryptor_proto, encryptor_type)
         for snd_child in snd_children])
     encryptor_args = asyncio.gather(*[
-        snd_child.create_tuple([v, pk, sk])
+        snd_child.create_struct([v, pk, sk])
         for v, pk, sk, snd_child in zip(
             *federated_value_internals, snd_children)])
     encryptor_fns, encryptor_args = await asyncio.gather(
@@ -281,7 +281,7 @@ class EasyBoxChannel(BaseChannel):
         rcv_child.create_value(decryptor_proto, decryptor_type)
         for rcv_child in rcv_children])
     decryptor_args = asyncio.gather(*[
-        rcv_child.create_tuple([v, pk, sk])
+        rcv_child.create_struct([v, pk, sk])
         for v, pk, sk, rcv_child in zip(
             *federated_value_internals, rcv_children)])
     decryptor_fns, decryptor_args = await asyncio.gather(
@@ -314,14 +314,14 @@ class EasyBoxChannel(BaseChannel):
     py_typecheck.check_len(pk_sender.internal_representation, len(snd_children))
     py_typecheck.check_len(sk_receiver.internal_representation, 1)
     ### Materialize decryptor type_spec & function definition
-    py_typecheck.check_type(val.type_signature, tff.NamedTupleType)
+    py_typecheck.check_type(val.type_signature, tff.StructType)
     type_analysis.check_federated_type(val.type_signature[0],
         placement=receiver, all_equal=True)
     input_type = val.type_signature[0].member
     #   each input_type is a tuple needed for one value to be decrypted
-    py_typecheck.check_type(input_type, tff.NamedTupleType)
-    py_typecheck.check_type(pk_snd_type, tff.NamedTupleType)
-    py_typecheck.check_len(input_type, len(pk_snd_type))
+    py_typecheck.check_type(input_type, tff.StructType)
+    py_typecheck.check_type(pk_snd_type, tff.StructType)
+    py_typecheck.check_len(val.type_signature, len(pk_snd_type))
     input_element_type = input_type
     pk_element_type = pk_snd_type[0]
     decryptor_arg_spec = (input_element_type, pk_element_type, sk_rcv_type)
@@ -335,15 +335,15 @@ class EasyBoxChannel(BaseChannel):
     sk = sk_receiver.internal_representation[0]
     decryptor_fn = await rcv_child.create_value(decryptor_proto, decryptor_type)
     decryptor_args = await asyncio.gather(*[
-        rcv_child.create_tuple([v, pk, sk])
+        rcv_child.create_struct([v, pk, sk])
         for v, pk in zip(vals, pk_sender.internal_representation)])
     decrypted_values = await asyncio.gather(*[
         rcv_child.create_call(decryptor_fn, arg)
         for arg in decryptor_args])
     decrypted_value_types = [decryptor_type.result] * len(decrypted_values)
     return federated_resolving_strategy.FederatedResolvingStrategyValue(
-        anonymous_tuple.from_container(decrypted_values),
-        tff.NamedTupleType([
+        structure.from_container(decrypted_values),
+        tff.StructType([
             tff.FederatedType(dvt, receiver, all_equal=True)
             for dvt in decrypted_value_types]))
 
@@ -409,7 +409,7 @@ def _get_other_placement(this_placement, both_placements):
 
 def _check_value_placement(arg, placements):
   py_typecheck.check_type(arg, federated_resolving_strategy.FederatedResolvingStrategyValue)
-  py_typecheck.check_type(arg.type_signature, (tff.FederatedType, tff.NamedTupleType))
+  py_typecheck.check_type(arg.type_signature, (tff.FederatedType, tff.StructType))
   value_type = arg.type_signature
   sender_placement = arg.type_signature.placement
   if sender_placement not in placements:

@@ -23,7 +23,7 @@ def materialize_computation_from_cache(
   if fn_proto is None:
     func = factory_func(*arg_spec, **factory_kwargs)
     if len(arg_spec) > 1:
-      arg_spec = tff.NamedTupleType(arg_spec)
+      arg_spec = tff.StructType(arg_spec)
     else:
       arg_spec = arg_spec[0]
     fn_proto, fn_type = lift_to_computation_spec(

@@ -39,4 +39,4 @@ class KeyStore:
     py_typecheck.check_type(key,
         federated_resolving_strategy.FederatedResolvingStrategyValue)
     py_typecheck.check_type(key.type_signature,
-        (tff.NamedTupleType, tff.FederatedType))
+        (tff.StructType, tff.FederatedType))

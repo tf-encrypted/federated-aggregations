@@ -18,9 +18,10 @@ class ChannelGrid:
       setup_steps = []
       tmp_channel_dict = {}
       for placement_pair, channel_factory in self._channel_dict.items():
-        channel = channel_factory(strategy, *placement_pair)
+        pair = tuple(sorted(placement_pair, key=lambda p: p.uri))
+        channel = channel_factory(strategy, *pair)
         setup_steps.append(channel.setup())
-        tmp_channel_dict[placement_pair] = channel
+        tmp_channel_dict[pair] = channel
       await asyncio.gather(*setup_steps)
       self._channel_dict = tmp_channel_dict
       self.requires_setup = False

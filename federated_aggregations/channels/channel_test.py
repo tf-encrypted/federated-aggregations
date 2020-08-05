@@ -6,7 +6,7 @@ from absl.testing import parameterized
 import asyncio
 import tensorflow as tf
 import tensorflow_federated as tff
-from tensorflow_federated.python.common_libs import anonymous_tuple
+from tensorflow_federated.python.common_libs import structure
 from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 from tensorflow_federated.python.core.impl.types import placement_literals
 from tensorflow_federated.python.core.impl.types import type_conversions
@@ -24,7 +24,7 @@ class PlaintextChannelTest(utils.AsyncTestCase):
           tf.constant(2.0, dtype=tf.float32)))
   def test_transfer(self, value, source_placement, target_placement, expected):
     fed_ex = utils.create_test_executor(channel=ch.PlaintextChannel)
-    strategy = fed_ex.intrinsic_strategy
+    strategy = fed_ex._strategy
     channel_grid = strategy.channel_grid
     self.run_sync(channel_grid.setup_channels(strategy))
 
@@ -38,11 +38,11 @@ class PlaintextChannelTest(utils.AsyncTestCase):
     assert isinstance(transferred,
         federated_resolving_strategy.FederatedResolvingStrategyValue)
     if isinstance(expected, list):
-      assert isinstance(transferred.type_signature, tff.NamedTupleType)
+      assert isinstance(transferred.type_signature, tff.StructType)
       for i, elt_type_spec in enumerate(transferred.type_signature):
         self.assertEqual(elt_type_spec,
             tff.FederatedType(expected_type[i], target_placement, True))
-      result = anonymous_tuple.flatten(result)
+      result = structure.flatten(result)
     else:
       self.assertEqual(transferred.type_signature,
           tff.FederatedType(expected_type, target_placement, True))
@@ -52,7 +52,7 @@ class PlaintextChannelTest(utils.AsyncTestCase):
 class EasyBoxChannelTest(utils.AsyncTestCase):
   def test_generate_aggregator_keys(self):
     fed_ex = utils.create_test_executor()
-    strategy = fed_ex.intrinsic_strategy
+    strategy = fed_ex._strategy
     channel_grid = strategy.channel_grid
     self.run_sync(channel_grid.setup_channels(strategy))
     
@@ -72,9 +72,9 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
           tf.constant(2.0, dtype=tf.float32)))
   def test_transfer(self, value, source_placement, target_placement, expected):
     fed_ex = utils.create_test_executor()
-    strategy = fed_ex.intrinsic_strategy
+    strategy = fed_ex._strategy
     channel_grid = strategy.channel_grid
-    self.run_sync(channel_grid.setup_channels(fed_ex.intrinsic_strategy))
+    self.run_sync(channel_grid.setup_channels(fed_ex._strategy))
 
     channel = channel_grid[(placement_literals.CLIENTS,
                             placement_literals.SERVER)]
@@ -84,7 +84,7 @@ class EasyBoxChannelTest(utils.AsyncTestCase):
     decrypted = self.run_sync(transferred.compute())
 
     if isinstance(expected, list):
-      decrypted = anonymous_tuple.flatten(decrypted)
+      decrypted = structure.flatten(decrypted)
       self.assertEqual(decrypted, expected)
     else:
       for d in decrypted:

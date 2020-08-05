@@ -1,2 +1,2 @@
-tensorflow-federated>=0.14.0
-tf-encrypted-primitives>=0.0.1
+tensorflow-federated~=0.16.1
+tf-encrypted-primitives~=0.1.0

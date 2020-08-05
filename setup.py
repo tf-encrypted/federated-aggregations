@@ -1,15 +1,15 @@
 """TFF Aggregations is a lib for secure aggregation in TensorFlow Federated.
 
 TFF Aggregations uses primitives from
-[TF Encrypted](https://github.com/tf-encrypted/tf-encrypted) to define and
+TF Encrypted (https://github.com/tf-encrypted/tf-encrypted) to define and
 execute secure versions of federated aggregation functions from TFF's
 Federated Core."""
 import setuptools
 
 DOCLINES = __doc__.split('\n')
 REQUIRED_PACKAGES = [
-    'tensorflow-federated>=0.14.0',
-    'tf-encrypted-primitives>=0.0.1',
+    'tensorflow-federated>=0.16.1',
+    'tf-encrypted-primitives>=0.1.0',
 ]
 
 with open('federated_aggregations/version.py') as fp:
@@ -39,6 +39,6 @@ setuptools.setup(
         "Topic :: Security :: Cryptography",
     ],
     license='Apache 2.0',
-    keywords='tensorflow encrypted federated machine learning',
+    keywords='tensorflow encrypted secure paillier federated machine learning',
 )
 

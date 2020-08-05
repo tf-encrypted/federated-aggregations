@@ -2,7 +2,6 @@ import asyncio
 from collections import OrderedDict
 
 import tensorflow_federated as tff
-from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computation_types
 from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
@@ -39,14 +38,14 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
     return child_executors
 
   def _check_for_paillier_placement(self):
-    if paillier_placement.PAILLIER not in self._target_executors:
+    if paillier_placement.AGGREGATOR not in self._target_executors:
       raise ValueError('Missing Paillier aggregator placement.')
-    paillier_executor = self._target_executors[paillier_placement.PAILLIER]
+    paillier_executor = self._target_executors[paillier_placement.AGGREGATOR]
     paillier_cardinality = len(paillier_executor)
     if paillier_cardinality != 1:
       raise ValueError(
           'Unsupported cardinality for Paillier aggregator placement {}: '
-          '{}.'.format(paillier_placement.PAILLIER, paillier_cardinality))
+          '{}.'.format(paillier_placement.AGGREGATOR, paillier_cardinality))
   
   async def _move(self, value, source_placement, target_placement):
     await self.channel_grid.setup_channels(self)
@@ -66,7 +65,7 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
         tff.FederatedType(ek_ref.type_signature, tff.SERVER, True))
     placed = await asyncio.gather(
       self._move(ek, tff.SERVER, tff.CLIENTS),
-      self._move(ek, tff.SERVER, paillier_placement.PAILLIER))
+      self._move(ek, tff.SERVER, paillier_placement.AGGREGATOR))
     self.encryption_key_server = ek
     self.encryption_key_clients = placed[0]
     self.encryption_key_paillier = placed[1]
@@ -76,7 +75,7 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
         tff.FederatedType(dk_ref.type_signature, tff.SERVER, all_equal=True))
 
   async def compute_federated_secure_sum(self, arg):
-    self._check_arg_is_anonymous_tuple(arg)
+    self._check_arg_is_structure(arg)
     py_typecheck.check_len(arg.internal_representation, 2)
     value_type = arg.type_signature[0]
     type_analysis.check_federated_type(value_type, placement=tff.CLIENTS)
@@ -100,12 +99,12 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
         self.encryption_key_clients, clients_value)
     # Perform Paillier sum on ciphertexts
     encrypted_values = await self._move(encrypted_values,
-        tff.CLIENTS, paillier_placement.PAILLIER)
+        tff.CLIENTS, paillier_placement.AGGREGATOR)
     encrypted_sum = await self._compute_paillier_sum(
         self.encryption_key_paillier, encrypted_values)
     # Move to server and decrypt the result
     encrypted_sum = await self._move(encrypted_sum,
-        paillier_placement.PAILLIER, tff.SERVER)
+        paillier_placement.AGGREGATOR, tff.SERVER)
     decrypted_result = await self._compute_paillier_decryption(
         self.decryption_key,
         self.encryption_key_server,
@@ -124,13 +123,13 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
     py_typecheck.check_len(clients_value.internal_representation, num_clients)
     encryptor_proto, encryptor_type = utils.lift_to_computation_spec(
         self._paillier_encryptor,
-        input_arg_type=tff.NamedTupleType((
+        input_arg_type=tff.StructType((
             client_encryption_keys.type_signature.member,
             clients_value.type_signature.member)))
     encryptor_fns = asyncio.gather(*[
         c.create_value(encryptor_proto, encryptor_type)
         for c in client_children])
-    encryptor_args = asyncio.gather(*[c.create_tuple((ek, v)) for c, ek, v in zip(
+    encryptor_args = asyncio.gather(*[c.create_struct((ek, v)) for c, ek, v in zip(
         client_children,
         client_encryption_keys.internal_representation,
         clients_value.internal_representation)])
@@ -147,20 +146,20 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
       encryption_key: federated_resolving_strategy.FederatedResolvingStrategyValue,
       values: federated_resolving_strategy.FederatedResolvingStrategyValue):
     paillier_child = self._get_child_executors(
-        paillier_placement.PAILLIER, index=0)
+        paillier_placement.AGGREGATOR, index=0)
     sum_proto, sum_type = utils.lift_to_computation_spec(
         self._paillier_sequence_sum,
-        input_arg_type=tff.NamedTupleType((
+        input_arg_type=tff.StructType((
             encryption_key.type_signature.member,
-            tff.NamedTupleType([vt.member for vt in values.type_signature]))))
+            tff.StructType([vt.member for vt in values.type_signature]))))
     sum_fn = paillier_child.create_value(sum_proto, sum_type)
-    sum_arg = paillier_child.create_tuple((
+    sum_arg = paillier_child.create_struct((
         encryption_key.internal_representation,
-        await paillier_child.create_tuple(values.internal_representation)))
+        await paillier_child.create_struct(values.internal_representation)))
     sum_fn, sum_arg = await asyncio.gather(sum_fn, sum_arg)
     encrypted_sum = await paillier_child.create_call(sum_fn, sum_arg)
     return federated_resolving_strategy.FederatedResolvingStrategyValue(encrypted_sum,
-        tff.FederatedType(sum_type.result, paillier_placement.PAILLIER, True))
+        tff.FederatedType(sum_type.result, paillier_placement.AGGREGATOR, True))
 
   async def _compute_paillier_decryption(self,
       decryption_key: federated_resolving_strategy.FederatedResolvingStrategyValue,
@@ -175,9 +174,9 @@ class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
         paillier_comp.make_decryptor,
         self._paillier_decryptor_cache,
         arg_spec=decryptor_arg_spec,
-        dtype=export_dtype)
+        export_dtype=export_dtype)
     decryptor_fn = server_child.create_value(decryptor_proto, decryptor_type)
-    decryptor_arg = server_child.create_tuple((
+    decryptor_arg = server_child.create_struct((
         decryption_key.internal_representation,
         encryption_key.internal_representation,
         value.internal_representation))
@@ -221,7 +220,7 @@ def _check_key_inputter(fn_value):
         'found {}.'.format(len(fn_type.result)))
   ek_type, dk_type = fn_type.result
   py_typecheck.check_type(ek_type, tff.TensorType)
-  py_typecheck.check_type(dk_type, tff.NamedTupleType)
+  py_typecheck.check_type(dk_type, tff.StructType)
   try:
     py_typecheck.check_len(dk_type, 2)
   except ValueError:

@@ -17,7 +17,7 @@ from absl.testing import parameterized
 import asyncio
 
 import tensorflow_federated as tff
-from tensorflow_federated.python.core.impl.executors import federating_executor
+from tensorflow_federated.python.core.impl.executors import federated_resolving_strategy
 
 from federated_aggregations.channels import channel_grid as grid
 from federated_aggregations.channels import channel as ch
@@ -34,15 +34,13 @@ def create_test_executor(
     channel: ch.Channel = ch.EasyBoxChannel):
   if channel_grid is None:
     channel_grid = grid.ChannelGrid({(tff.CLIENTS, tff.SERVER): channel})
-
-  def intrinsic_strategy_fn(executor):
-    return MockStrategy(executor, channel_grid)
-
-  return tff.framework.FederatingExecutor({
+  strategy_executors = {
       tff.SERVER: create_bottom_stack(),
       tff.CLIENTS: [create_bottom_stack() for _ in range(number_of_clients)],
-      None: create_bottom_stack()},
-      intrinsic_strategy_fn=intrinsic_strategy_fn)
+  }
+  return tff.framework.FederatingExecutor(
+      MockStrategy.factory(strategy_executors, channel_grid),
+      unplaced_executor=create_bottom_stack())
 
 
 class AsyncTestCase(parameterized.TestCase):
@@ -69,7 +67,17 @@ class AsyncTestCase(parameterized.TestCase):
     return self.loop.run_until_complete(coro)
 
 
-class MockStrategy(federating_executor.CentralizedIntrinsicStrategy):
-  def __init__(self, parent_executor, channel_grid=None):
-    super().__init__(parent_executor)
+class MockStrategy(federated_resolving_strategy.FederatedResolvingStrategy):
+  def __init__(self, executor, target_executors, channel_grid):
+    super().__init__(executor, target_executors)
     self.channel_grid = channel_grid
+
+  @classmethod
+  def factory(cls, target_executors, channel_grid):
+    return lambda executor: cls(executor, target_executors, channel_grid)
+
+  def _get_child_executors(self, placement, index=None):
+    child_executors = self._target_executors[placement]
+    if index is not None:
+      return child_executors[index]
+    return child_executors

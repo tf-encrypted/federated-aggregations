@@ -7,10 +7,7 @@ import tensorflow as tf
 import tensorflow_federated as tff
 from tensorflow_federated.python.core.impl.executors import execution_context
 
-from federated_aggregations import channels
 from federated_aggregations.paillier import factory
-from federated_aggregations.paillier import placement
-from federated_aggregations.paillier import strategy
 
 
 def _install_executor(executor_factory_instance):
@@ -70,8 +67,8 @@ class PaillierAggregatingStrategyTest(parameterized.TestCase):
     member_type = tff.TensorType(tf.int32, shape)
     @tff.federated_computation(tff.FederatedType(member_type, tff.CLIENTS))
     def secure_paillier_addition(x):
-      bitwidth = 8  # assume upper-bound of 2^8 on summation result
-      return tff.federated_secure_sum(x, bitwidth)
+      return tff.federated_secure_sum(x, 64)
+
     with _install_executor(factory.local_paillier_executor_factory()):
       result = secure_paillier_addition([input_tensor] * NUM_CLIENTS)
     expected = input_tensor * NUM_CLIENTS
