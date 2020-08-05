@@ -25,7 +25,7 @@ print(result)
 ```
 
 # Installation
-This library is offered as a Python package but not published on PyPI, so you must install it from source in your preferred Python environment.
+This library is offered as a Python package but is not currently published on PyPI, so you must install it from source in your preferred Python environment.
 
 ```
 pip install -r requirements.txt
