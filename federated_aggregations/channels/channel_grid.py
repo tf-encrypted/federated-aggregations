@@ -10,6 +10,16 @@ from federated_aggregations import utils
 
 @dataclass
 class ChannelGrid:
+  """A container fully characterizing the network topology between placements.
+
+  FederatingStrategy implementations can use this class to keep track of
+  Channels between any pair of placements. It assumes that each Channel is
+  two-way, i.e. it describes an unordered pair of placements.
+
+  Attributes:
+    requires_setup: Tracks whether the underlying channels of the grid have
+        been set up; only some Channels require this setup phase.
+  """
   _channel_dict: Dict[utils.PlacementPair, channel.Channel]
   requires_setup: bool = True
 

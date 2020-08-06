@@ -16,6 +16,30 @@ from federated_aggregations.paillier import computations as paillier_comp
 
 
 class PaillierAggregatingStrategy(tff.framework.FederatedResolvingStrategy):
+  """A FederatingStrategy implementing secure_sum with a Paillier cryptoscheme.
+
+  Outside of its ability to handle a tff.federated_secure_sum intrinsic, this
+  strategy is essentially identical to FederatedResolvingStrategy. Our
+  implementaiton of federated_secure_sum has an important semantic difference
+  from the one described in TFF; we explicitly do not handle the positional
+  bitwidth argument. This is because we do not optimize for efficient packing
+  of client ciphertexts during communication and computation, which would
+  require the bitwidth argument in order to maximize the number of native
+  int32s that can be packed into a single Paillier ciphertext tensor.
+
+  Attributes:
+    channel_grid: A ChannelGrid containing the explicit communication Channels
+      to use between each unordered pair of placements. A minimally secure
+      instantiation of this strategy will use a secure channel for the
+      `(AGGREGATOR, CLIENTS)` placement pair, but it could also be a plaintext
+      channel (e.g. for tests or baseline benchmarks.).
+
+  Raises:
+    ValueError if the `target_executors` argument supplied for Strategy
+        construction is malformed. This is the case if it is missing an
+        executor stack for the AGGREGATOR placement, or if the executor stack
+        has cardinality other than 1.
+  """
   @classmethod
   def factory(cls, target_executors, channel_grid, key_inputter):
     return lambda executor: cls(executor, target_executors, channel_grid, key_inputter)
