@@ -15,6 +15,10 @@ from federated_aggregations import utils
 from federated_aggregations.channels import computations as sodium_comp
 from federated_aggregations.channels import key_store
 
+PlacementPair = Tuple[
+    placement_literals.PlacementLiteral,
+    placement_literals.PlacementLiteral]
+
 
 class Channel(metaclass=abc.ABCMeta):
   @abc.abstractmethod
@@ -51,7 +55,7 @@ class BaseChannel(Channel):
   def __init__(
       self,
       strategy,
-      *placements: utils.PlacementPair):
+      *placements: PlacementPair):
     self.strategy = strategy
     self.placements = placements
 
@@ -141,7 +145,7 @@ class EasyBoxChannel(BaseChannel):
   def __init__(
       self,
       strategy,
-      *placements: utils.PlacementPair):
+      *placements: PlacementPair):
     super().__init__(strategy, *placements)
     self.key_references = key_store.KeyStore()
     self._requires_setup = True

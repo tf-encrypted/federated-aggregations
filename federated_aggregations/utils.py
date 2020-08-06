@@ -1,11 +1,6 @@
 from typing import Tuple
 
 import tensorflow_federated as tff
-from tensorflow_federated.python.core.impl.types import placement_literals
-
-PlacementPair = Tuple[
-    placement_literals.PlacementLiteral,
-    placement_literals.PlacementLiteral]
 
 def materialize_computation_from_cache(
     factory_func, cache, arg_spec, **factory_kwargs):
