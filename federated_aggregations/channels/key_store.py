@@ -7,6 +7,10 @@ from tensorflow_federated.python.core.impl.types import placement_literals
 
 
 class KeyStore:
+  """A container for key management and storage.
+
+  This is only used during the setup phase of EasyBoxChannel.
+  """
   _default_store = lambda k: {'pk': None, 'sk': None}
 
   def __init__(self):

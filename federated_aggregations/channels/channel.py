@@ -15,6 +15,10 @@ from federated_aggregations import utils
 from federated_aggregations.channels import computations as sodium_comp
 from federated_aggregations.channels import key_store
 
+PlacementPair = Tuple[
+    placement_literals.PlacementLiteral,
+    placement_literals.PlacementLiteral]
+
 
 class Channel(metaclass=abc.ABCMeta):
   @abc.abstractmethod
@@ -35,10 +39,23 @@ class Channel(metaclass=abc.ABCMeta):
 
 
 class BaseChannel(Channel):
+  """Abstract interface for communication channels between placement pairs.
+
+  This class defines the contract between FederatingStrategy and concrete
+  implementations of the Channel abstraction. For any subclass ConcreteChannel,
+  FederatingStrategy should only use the ConcreteChannel.transfer method.
+  Implementations of the Channel interface need only be concerned with
+  extending Channel.send, Channel.receive, and Channel.setup.
+
+  Attributes:
+    strategy: The FederatingStrategy this Channel belongs to.
+    placements: The (unordered) pair of placements that will communicate
+        through this channel.
+  """
   def __init__(
       self,
       strategy,
-      *placements: utils.PlacementPair):
+      *placements: PlacementPair):
     self.strategy = strategy
     self.placements = placements
 
@@ -85,6 +102,13 @@ class BaseChannel(Channel):
 
 
 class PlaintextChannel(BaseChannel):
+  """An insecure Channel implementation that communicates tensors in plaintext.
+
+  Attributes:
+    strategy: The FederatingStrategy this Channel belongs to.
+    placements: The (unordered) pair of placements that will use this channel
+        to communicate.
+  """
   async def send(self, value, source, recipient):
     del source, recipient
     return value
@@ -98,10 +122,30 @@ class PlaintextChannel(BaseChannel):
 
 
 class EasyBoxChannel(BaseChannel):
+  """A secure Channel using authenticated encryption.
+
+  EasyBoxChannel uses libsodium's EasyBox for authenticated encryption. This
+  channel is responsible for key setup, including key generation and exchange.
+  It also defines the pre- and post-processing steps required to achieve
+  encryption-in-transit under the native runtime's communication model.
+
+  TODO: surface _key_generator to avoid keygen/exchange, and instead accept
+        keys from a trusted PKI.
+
+  Reference for encryption scheme:
+    https://libsodium.gitbook.io/doc/public-key_cryptography/authenticated_encryption
+
+  Attributes:
+    key_references: A KeyStore responsible for managing each placement's
+        public & secret keys.
+    strategy: The FederatingStrategy this Channel belongs to.
+    placements: The (unordered) pair of placements that will use this channel
+        to communicate.
+  """
   def __init__(
       self,
       strategy,
-      *placements: utils.PlacementPair):
+      *placements: PlacementPair):
     super().__init__(strategy, *placements)
     self.key_references = key_store.KeyStore()
     self._requires_setup = True
