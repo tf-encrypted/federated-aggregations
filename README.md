@@ -4,12 +4,14 @@ Using [TF Encrypted](https://github.com/tf-encrypted/tf-encrypted) primitives fo
 This project implements specific protocols for secure aggregation using secure computation primitives from [TF Encrypted](https://github.com/tf-encrypted/tf-encrypted). Our aim is to express secure aggregations with the full breadth of TFE's language for secure computations, however this prototype is much smaller in scope. We implement a specific aggregation protocol based on Paillier homomorphic encryption; see the [accompanying blog post](https://medium.com/dropoutlabs/building-secure-aggregation-into-tensorflow-federated-4514fca40cc0) or the sections below for more details.
 
 ```python
+import numpy as np
 import tensorflow as tf
 import tensorflow_federated as tff
 from federated_aggregations import paillier
 
 paillier_factory = paillier.local_paillier_executor_factory()
-tff.framework.set_default_executor(paillier_factory)
+paillier_context = tff.framework.ExecutionContext(paillier_factory)
+tff.framework.set_default_context(paillier_context)
 
 # data from 5 clients
 x = [np.array([i, i + 1], dtype=np.int32) for i in range(5)]
@@ -25,7 +27,7 @@ print(result)
 ```
 
 # Installation
-This library is offered as a Python package but is not currently published on PyPI, so you must install it from source in your preferred Python environment.
+This library is offered as a Python package but is not currently published on PyPI, so you must install it from source in your preferred Python environment. The code has been tested with Python 3.7.
 
 ```
 pip install -r requirements.txt

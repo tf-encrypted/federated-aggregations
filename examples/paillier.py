@@ -7,11 +7,10 @@ from federated_aggregations import paillier
 NUM_CLIENTS = 5
 
 paillier_factory = paillier.local_paillier_executor_factory(NUM_CLIENTS)
-paillier_factory = paillier.local_paillier_executor_factory()
 paillier_context = tff.framework.ExecutionContext(paillier_factory)
 tff.framework.set_default_context(paillier_context)
 
-@tff.federated_computation(tff.FederatedType(tff.TensorType(tf.int32, [2]), tff.CLIENTS))
+@tff.federated_computation(tff.FederatedType(tff.TensorType(tf.int32, [2]), tff.CLIENTS), tff.TensorType(tf.int32))
 def secure_paillier_addition(x, bitwidth):
   return tff.federated_secure_sum(x, bitwidth)
 
