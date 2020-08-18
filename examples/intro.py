@@ -4,7 +4,8 @@ from federated_aggregations import paillier
 
 NUM_CLIENTS = 5
 paillier_factory = paillier.local_paillier_executor_factory()
-tff.framework.set_default_executor(paillier_factory)
+paillier_context = tff.framework.ExecutionContext(paillier_factory)
+tff.framework.set_default_context(paillier_context)
 
 @tff.federated_computation(
     tff.FederatedType(tff.TensorType(tf.int32, [2]), tff.CLIENTS))
