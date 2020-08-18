@@ -20,7 +20,7 @@ class ChannelGrid:
     requires_setup: Tracks whether the underlying channels of the grid have
         been set up; only some Channels require this setup phase.
   """
-  _channel_dict: Dict[utils.PlacementPair, channel.Channel]
+  _channel_dict: Dict[channel.PlacementPair, channel.Channel]
   requires_setup: bool = True
 
   async def setup_channels(self, strategy):
@@ -36,7 +36,7 @@ class ChannelGrid:
       self._channel_dict = tmp_channel_dict
       self.requires_setup = False
 
-  def __getitem__(self, placements: utils.PlacementPair):
+  def __getitem__(self, placements: channel.PlacementPair):
     py_typecheck.check_type(placements, tuple)
     py_typecheck.check_len(placements, 2)
     sorted_placements = sorted(placements, key=lambda p: p.uri)
