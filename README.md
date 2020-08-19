@@ -36,17 +36,21 @@ python setup.py install
 
 # Features
 ## Federated computation
-Currently, we simply add an implementation of the [`tff.federated_secure_sum`](https://www.tensorflow.org/federated/api_docs/python/tff/federated_secure_sum) to the default TFF simulation stack. The complete protocol is visualized below (TODO). We do not rewrite any of the higher-level APIs for federated averaging, but these should be straightforward to implement.
+Currently, we simply add an implementation of the [`tff.federated_secure_sum`](https://www.tensorflow.org/federated/api_docs/python/tff/federated_secure_sum) to the default TFF simulation stack. We do not rewrite any of the higher-level APIs for federated averaging, but these should be straightforward to implement.
 
 ## Protocols
-Currently, we implement secure aggregation via the Paillier homomorphic encryption scheme. This protocol is well suited for federated averaging with highly-available clients, e.g. cross-silo federated learning between organizations. Please see the [accompanying blog post](https://medium.com/dropoutlabs/building-secure-aggregation-into-tensorflow-federated-4514fca40cc0) for an illustration and more details.
+Currently, we implement secure aggregation via the Paillier homomorphic encryption scheme. This protocol is well suited for federated averaging with highly-available clients, e.g. cross-silo federated learning between organizations. Please see the [accompanying blog post](https://medium.com/dropoutlabs/building-secure-aggregation-into-tensorflow-federated-4514fca40cc0) or the [illustration below](#illustrated-protocol) for more details.
 
 We outsource the Paillier aggregation to an "aggregation service" running separately from the Server role in traditional FL. This fits into the bulletin-board style of FL, where a service separate from the coordinator is responsible for aggregating model updates securely, and the Server (i.e. coordinator) periodically pulls & decrypts the latest model from that service. This achieves the specific functionality outlined in [this section](https://github.com/tf-encrypted/rfcs/tree/master/20190924-tensorflow-federated#specific-encrypted-executors) of the corresponding RFC.
 
-## Secure Channels
+## Secure channels
 TensorFlow Federated does not implement point-to-point communication directly between placements; it instead routes all communications through a computation "driver" (i.e. the host running the TFF Python script, also usually responsible for unplaced computation). To reduce communication when using the native backend, this driver is usually collocated with the tff.SERVER placement's executor stack, so that any values communicated between the driver and the tff.SERVER don't incur a network cost.
 
 This communication pattern presents a problem for implementing secure aggregation, since many SMPC protocols assume the existence of authenticated channels between parties. In order to realize this in the specific case of a bulletin-board aggregation service, we follow the approach outlined in [this section](https://github.com/tf-encrypted/rfcs/tree/master/20190924-tensorflow-federated#network-strategy-and-secure-channels) of our RFC. Please see the [accompanying blog post](https://medium.com/dropoutlabs/building-secure-aggregation-into-tensorflow-federated-4514fca40cc0) for an illustration and more details.
+
+# Illustrated protocol
+
+![Secure aggregation protocol](./protocol.gif)
 
 # Development
 If you want to get up and running, please follow these steps. We strongly encourage using a virtual environment.
