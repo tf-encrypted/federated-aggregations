@@ -27,7 +27,7 @@ print(result)
 ```
 
 # Installation
-This library is offered as a Python package but is not currently published on PyPI, so you must install it from source in your preferred Python environment. The code has been tested with Python 3.7.
+This library is offered as a Python package but is not currently published on PyPI, so you must install it from source in your preferred Python environment. The code has been tested with Python 3.7 on MacOS.
 
 ```
 pip install -r requirements.txt
